@@ -1,0 +1,10 @@
+{
+  "description": "Engage in a competitive entrepreneurship event with real-time rankings and scores, offering teams a dynamic platform to track their performance and net worth.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
