@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  TrendingUp,
   Trophy,
   Users,
   WalletCards,
@@ -33,6 +34,8 @@ import {
   Team,
   calculateNetWorth,
   formatMoney,
+  getLastAction,
+  getRankChange,
   mockEvents,
   mockGames,
   mockParticipants,
@@ -101,7 +104,13 @@ function Logo({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function Navbar({ navigate }: { navigate: (page: Page) => void }) {
+function Navbar({
+  navigate,
+  isLeaderboardAccessible = true,
+}: {
+  navigate: (page: Page) => void
+  isLeaderboardAccessible?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const nav = (page: Page) => {
     navigate(page)
@@ -120,8 +129,14 @@ function Navbar({ navigate }: { navigate: (page: Page) => void }) {
           <button onClick={() => nav("home")} className="nav-link">
             The event
           </button>
-          <button onClick={() => nav("leaderboard")} className="nav-link">
+          <button
+            onClick={() => nav("leaderboard")}
+            className="nav-link flex items-center gap-1.5"
+          >
             Live board
+            {!isLeaderboardAccessible && (
+              <LockKeyhole size={13} className="text-gold" />
+            )}
           </button>
           <button onClick={() => nav("team")} className="nav-link">
             Portfolio
@@ -270,7 +285,7 @@ function Landing({
             animate={{ opacity: 1, y: 0 }}
           >
             <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-gold/25 bg-gold/8 px-4 py-2 text-xs uppercase tracking-[0.2em] text-gold">
-              <span className="live-dot" /> Markets open · 24 May 2025
+              <span className="live-dot" /> Markets open · 07 october 2026
             </div>
             <h1 className="hero-title">
               Make your first <span>million.</span>
@@ -294,21 +309,7 @@ function Landing({
                 View live market <Activity size={17} />
               </Button>
             </div>
-            <div className="mt-10 flex items-center gap-6 text-sm text-white/45">
-              <div>
-                <strong className="block text-xl text-white">12</strong>Teams
-              </div>
-              <div className="h-8 w-px bg-white/10" />
-              <div>
-                <strong className="block text-xl text-white">4</strong>Market
-                games
-              </div>
-              <div className="h-8 w-px bg-white/10" />
-              <div>
-                <strong className="block text-xl text-white">$1M</strong>On the
-                line
-              </div>
-            </div>
+            
           </motion.div>
           <motion.div
             initial={{ opacity: 0, scale: 0.94 }}
@@ -317,42 +318,117 @@ function Landing({
             className="relative"
           >
             <div className="hero-logo-card">
-              <div className="absolute left-5 top-5 flex items-center gap-2 text-xs uppercase tracking-widest text-white/40">
-                <ShieldCheck size={14} className="text-gold" /> Presented by
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="hero-partner-logo">
+                    <img
+                      src={logo}
+                      alt="EBEC"
+                      className="size-full object-cover"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                      Presented by
+                    </p>
+                    <p className="mt-0.5 text-sm font-semibold text-white">
+                      EBEC
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border border-gain/20 bg-gain/8 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gain">
+                  <span className="live-dot bg-gain" /> Market live
+                </div>
               </div>
-              <img
-                src={logo}
-                alt="EBEC"
-                className="mx-auto w-56 mix-blend-screen"
-              />
-              <div className="mt-3 text-center">
-                <span className="font-display text-3xl text-white">
-                  WALL STREET
-                </span>
-                <span className="block font-display text-3xl text-gold">
-                  NIGHT
-                </span>
+
+              <div className="mt-9 flex items-end justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-white/35">
+                    WSN Composite
+                  </p>
+                  <p className="mt-2 text-4xl font-semibold tracking-tight text-white">
+                    $124,850
+                  </p>
+                  <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-gain">
+                    <TrendingUp size={16} /> +24.85% tonight
+                  </p>
+                </div>
+            
               </div>
-              <div className="market-stamp">WSN · 25</div>
+
+              <div className="hero-chart">
+                <div className="hero-chart-grid" />
+                <svg
+                  viewBox="0 0 520 190"
+                  preserveAspectRatio="none"
+                  className="relative z-10 h-full w-full overflow-visible"
+                  aria-label="Animated rising stock market chart"
+                >
+                  <defs>
+                    <linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#F5C542" stopOpacity=".3" />
+                      <stop offset="100%" stopColor="#F5C542" stopOpacity="0" />
+                    </linearGradient>
+                    <filter id="heroChartGlow">
+                      <feGaussianBlur stdDeviation="4" result="blur" />
+                      <feMerge>
+                        <feMergeNode in="blur" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </defs>
+                  <motion.path
+                    d="M0 175 C32 168 45 151 78 157 C108 162 125 124 158 133 C192 142 209 104 245 110 C278 116 300 73 335 84 C371 95 389 53 420 61 C456 70 478 30 520 18 L520 190 L0 190 Z"
+                    fill="url(#heroChartFill)"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 1.2, delay: 0.55 }}
+                  />
+                  <motion.path
+                    d="M0 175 C32 168 45 151 78 157 C108 162 125 124 158 133 C192 142 209 104 245 110 C278 116 300 73 335 84 C371 95 389 53 420 61 C456 70 478 30 520 18"
+                    fill="none"
+                    stroke="#F5C542"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    filter="url(#heroChartGlow)"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 2.2, ease: "easeInOut", delay: 0.25 }}
+                  />
+                  <motion.circle
+                    cx="520"
+                    cy="18"
+                    r="5"
+                    fill="#F5C542"
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: [0, 1, 0.65, 1], scale: 1 }}
+                    transition={{
+                      opacity: { duration: 1.8, repeat: Infinity },
+                      scale: { delay: 2.3 },
+                    }}
+                  />
+                </svg>
+                <div className="hero-chart-tag">
+                  <ArrowUpRight size={13} /> New high
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between border-t border-white/7 pt-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-white/25">
+                    Wall Street Night
+                  </p>
+                  <p className="mt-1 text-xs text-white/55">
+                    Entrepreneurship exchange
+                  </p>
+                </div>
+                
+              </div>
             </div>
           </motion.div>
         </div>
       </section>
-      <section className="section-wrap">
-        <SectionTitle
-          eyebrow="Live market"
-          title="Tonight's power players"
-          copy="The bell has rung. Every decision moves the market—and the leaderboard."
-        />
-        <div className="mx-auto max-w-4xl">
-          <Podium teams={teams.slice(0, 3)} onTeam={openTeam} />
-          <div className="mt-8 text-center">
-            <Button variant="ghost" onClick={() => navigate("leaderboard")}>
-              See full leaderboard <ArrowRight size={16} />
-            </Button>
-          </div>
-        </div>
-      </section>
+      
 
       <section className="border-y border-white/6 bg-white/[0.015]">
         <div className="section-wrap">
@@ -660,15 +736,50 @@ function Leaderboard({
   teams,
   events,
   openTeam,
+  isAccessible,
+  navigate,
 }: {
   teams: Team[]
   events: ScoreEvent[]
   openTeam: (team: Team) => void
+  isAccessible: boolean
+  navigate: (page: Page) => void
 }) {
   const [query, setQuery] = useState("")
+
+  if (!isAccessible) {
+    return (
+      <main className="page-shell flex items-center justify-center px-5 py-20">
+        <div className="mx-auto max-w-lg text-center">
+          <div className="mx-auto mb-6 flex size-20 items-center justify-center rounded-2xl border border-gold/25 bg-gold/10 text-gold shadow-2xl">
+            <LockKeyhole size={36} />
+          </div>
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-gold/25 bg-gold/8 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-gold">
+            <span className="live-dot bg-gold" /> Leaderboard Locked
+          </div>
+          <h1 className="font-display text-3xl font-semibold text-white sm:text-4xl">
+            Leaderboard Currently Inaccessible
+          </h1>
+          <p className="mt-4 text-sm leading-relaxed text-white/55">
+            The ranking board is hidden until team registration are completed.
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-4">
+            <Button onClick={() => navigate("home")} variant="secondary">
+              Return to Event
+            </Button>
+            <Button onClick={() => navigate("admin")}>
+              Admin Control Desk <ArrowRight size={16} />
+            </Button>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   const filtered = teams.filter((team) =>
     team.name.toLowerCase().includes(query.toLowerCase()),
   )
+
   return (
     <main className="page-shell">
       <section className="mx-auto max-w-7xl px-5 py-14 lg:px-8">
@@ -714,43 +825,97 @@ function Leaderboard({
               />
             </label>
           </div>
-          <div className="table-head hidden md:grid">
-            <span>Rank</span>
-            <span>Firm</span>
-            <span>Net worth</span>
+          <div className="overflow-x-auto">
+            <div className="min-w-[760px]">
+              <div className="table-head hidden md:grid">
+                <span>Rank</span>
+                <span>Firm</span>
+                <span>Last Action</span>
+                <span className="text-right">Net worth</span>
+                <span className="text-right">Changes</span>
+              </div>
+              <motion.div layout>
+                {filtered.map((team) => {
+                  const currentRankIndex = teams.findIndex(
+                    (t) => t.id === team.id,
+                  )
+                  const currentRank =
+                    currentRankIndex !== -1 ? currentRankIndex + 1 : 1
+                  const initialRank = team.initialRank ?? currentRank
+
+                  const lastAction = getLastAction(
+                    team.id,
+                    events,
+                    team.lastAction,
+                  )
+                  const rankChange = getRankChange(initialRank, currentRank)
+
+                  return (
+                    <motion.button
+                      layout
+                      key={team.id}
+                      onClick={() => openTeam(team)}
+                      className="leader-row"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rank-number ${
+                            currentRank <= 3 ? "text-gold" : ""
+                          }`}
+                        >
+                          {String(currentRank).padStart(2, "0")}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="team-avatar">{team.name.charAt(0)}</div>
+                        <div className="text-left truncate">
+                          <p className="font-medium text-white truncate">
+                            {team.name}
+                          </p>
+                          <p className="text-xs text-white/30 truncate">
+                            {team.ticker} · {team.members} partners
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-left">
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                            lastAction.type === "bonus"
+                              ? "border border-gain/25 bg-gain/10 text-gain"
+                              : lastAction.type === "penalty"
+                                ? "border border-loss/25 bg-loss/10 text-loss"
+                                : "border border-white/10 bg-white/5 text-white/60"
+                          }`}
+                        >
+                          {lastAction.text}
+                        </span>
+                      </div>
+                      <span className="text-right font-mono text-base font-semibold text-white">
+                        {formatMoney(team.netWorth)}
+                      </span>
+                      <div className="text-right">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+                            rankChange.diff > 0
+                              ? "border border-gain/25 bg-gain/10 text-gain"
+                              : rankChange.diff < 0
+                                ? "border border-loss/25 bg-loss/10 text-loss"
+                                : "border border-white/10 bg-white/5 text-white/40"
+                          }`}
+                        >
+                          {rankChange.diff > 0 && <ArrowUpRight size={13} />}
+                          {rankChange.diff < 0 && <ArrowDownRight size={13} />}
+                          {rankChange.text}
+                        </span>
+                      </div>
+                    </motion.button>
+                  )
+                })}
+              </motion.div>
+            </div>
           </div>
-          <motion.div layout>
-            {filtered.map((team, index) => (
-              <motion.button
-                layout
-                key={team.id}
-                onClick={() => openTeam(team)}
-                className="leader-row"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rank-number ${index < 3 ? "text-gold" : ""}`}
-                  >
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="team-avatar">{team.name.charAt(0)}</div>
-                  <div className="text-left">
-                    <p className="font-medium text-white">{team.name}</p>
-                    <p className="text-xs text-white/30">
-                      {team.ticker} · {team.members} partners
-                    </p>
-                  </div>
-                </div>
-                <span className="font-mono text-base font-semibold text-white">
-                  {formatMoney(team.netWorth)}
-                </span>
-              </motion.button>
-            ))}
-          </motion.div>
         </div>
       </section>
       <Ticker events={events} />
@@ -964,23 +1129,99 @@ function Admin({
   events,
   games,
   participants,
+  isLeaderboardAccessible,
+  setIsLeaderboardAccessible,
   setTeams,
   setEvents,
   setGames,
+  setParticipants,
 }: {
   teams: Team[]
   events: ScoreEvent[]
   games: Game[]
   participants: Participant[]
+  isLeaderboardAccessible: boolean
+  setIsLeaderboardAccessible: (acc: boolean) => void
   setTeams: React.Dispatch<React.SetStateAction<Team[]>>
   setEvents: React.Dispatch<React.SetStateAction<ScoreEvent[]>>
   setGames: React.Dispatch<React.SetStateAction<Game[]>>
+  setParticipants: React.Dispatch<React.SetStateAction<Participant[]>>
 }) {
   const [authed, setAuthed] = useState(false)
   const [tab, setTab] = useState<AdminTab>("overview")
   const [freeze, setFreeze] = useState(false)
   const [notice, setNotice] = useState("")
   if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />
+
+  const createRandomTeams = () => {
+    const presetTeams = [
+      { name: "Apex Capital", ticker: "APEX" },
+      { name: "Blue Chip Syndicate", ticker: "BLUE" },
+      { name: "Bull & Bear Co.", ticker: "BBCO" },
+      { name: "Cash Flow Kings", ticker: "CFKG" },
+      { name: "Golden Wolves", ticker: "GWLF" },
+      { name: "Margin Callers", ticker: "MRGN" },
+      { name: "The Rainmakers", ticker: "RAIN" },
+      { name: "Venture Vultures", ticker: "VVCO" },
+    ]
+
+    // Sort team presets strictly alphabetically
+    const sortedPresets = [...presetTeams].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )
+
+    // Fisher-Yates shuffle participants randomly
+    const shuffled = [...participants]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+
+    const numTeams = sortedPresets.length
+    const newParticipants: Participant[] = []
+    const newTeams: Team[] = []
+
+    const perTeam = Math.floor(shuffled.length / numTeams)
+    const remainder = shuffled.length % numTeams
+
+    let pIdx = 0
+    sortedPresets.forEach((preset, index) => {
+      const teamId = String(index + 1)
+      const count = perTeam + (index < remainder ? 1 : 0)
+
+      for (let c = 0; c < count; c++) {
+        if (pIdx < shuffled.length) {
+          newParticipants.push({
+            ...shuffled[pIdx],
+            team_id: teamId,
+          })
+          pIdx++
+        }
+      }
+
+      newTeams.push({
+        id: teamId,
+        name: preset.name,
+        ticker: preset.ticker,
+        starting_capital: 100000,
+        created_at: new Date().toISOString(),
+        members: count,
+        netWorth: 100000,
+        change: 0,
+        history: [100, 100],
+        initialRank: index + 1, // Stacked 1..N in alphabetical order
+        lastAction: "Registered",
+      })
+    })
+
+    setTeams(newTeams)
+    setParticipants(newParticipants)
+    setEvents([])
+    setIsLeaderboardAccessible(true)
+    setNotice(
+      "🎲 Created equal teams randomly & initialized in alphabetical order! Leaderboard is now accessible.",
+    )
+  }
 
   const addScore = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1029,10 +1270,34 @@ function Admin({
                   {tab}
                 </h1>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="hidden text-xs text-white/35 sm:inline">
-                  Freeze leaderboard
-                </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-panel px-3 py-1.5 text-xs text-white/70">
+                  <span>Board Access:</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIsLeaderboardAccessible(!isLeaderboardAccessible)
+                    }
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      isLeaderboardAccessible
+                        ? "border border-gain/30 bg-gain/15 text-gain"
+                        : "border border-gold/30 bg-gold/15 text-gold"
+                    }`}
+                  >
+                    {isLeaderboardAccessible ? (
+                      <>
+                        <span className="live-dot bg-gain" /> Accessible
+                      </>
+                    ) : (
+                      <>
+                        <LockKeyhole size={12} /> Locked
+                      </>
+                    )}
+                  </button>
+                </div>
+                <Button onClick={createRandomTeams}>
+                  <Sparkles size={14} /> Create Equal Teams
+                </Button>
                 <button
                   aria-label="Freeze leaderboard"
                   aria-pressed={freeze}
@@ -1067,7 +1332,11 @@ function Admin({
               />
             )}
             {tab === "teams" && (
-              <TeamsPanel teams={teams} setTeams={setTeams} />
+              <TeamsPanel
+                teams={teams}
+                setTeams={setTeams}
+                createRandomTeams={createRandomTeams}
+              />
             )}
             {tab === "members" && (
               <MembersPanel teams={teams} participants={participants} />
@@ -1277,75 +1546,96 @@ function AdminOverview({
 function TeamsPanel({
   teams,
   setTeams,
+  createRandomTeams,
 }: {
   teams: Team[]
   setTeams: React.Dispatch<React.SetStateAction<Team[]>>
+  createRandomTeams: () => void
 }) {
   const [query, setQuery] = useState("")
   return (
-    <div className="admin-card">
-      <div className="mb-5 flex flex-wrap justify-between gap-3">
-        <label className="search-box">
-          <Search size={15} />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search firms"
-          />
-        </label>
-        <Button
-          onClick={() =>
-            setTeams((current) => [
-              ...current,
-              {
-                id: crypto.randomUUID(),
-                name: "New Venture",
-                ticker: "NVCO",
-                starting_capital: 100000,
-                created_at: new Date().toISOString(),
-                members: 0,
-                netWorth: 100000,
-                change: 0,
-                history: [100, 100],
-              },
-            ])
-          }
-        >
-          <Plus size={15} /> New team
-        </Button>
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-gold/25 bg-gold/5 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 font-display text-xl text-gold">
+              <Sparkles size={20} /> Random Team Equalization & Initialization
+            </h3>
+            <p className="mt-2 max-w-2xl text-xs leading-relaxed text-white/60">
+              Shuffles all registered participants randomly and assigns them into equal-sized teams. Teams are stacked in <strong>alphabetical order</strong> with initial rank, starting capital ($100,000), "Registered" action, and zero rank changes.
+            </p>
+          </div>
+          <Button onClick={createRandomTeams}>
+            <Sparkles size={15} /> Create Equal Teams Randomly & Open Board
+          </Button>
+        </div>
       </div>
-      <div className="divide-y divide-white/6">
-        {teams
-          .filter((t) => t.name.toLowerCase().includes(query.toLowerCase()))
-          .map((team) => (
-            <div
-              className="grid items-center gap-3 py-4 sm:grid-cols-[1fr_1fr_auto]"
-              key={team.id}
-            >
-              <div>
-                <p className="text-sm text-white">{team.name}</p>
-                <p className="text-xs text-white/30">{team.ticker}</p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-white/25">
-                  Starting capital
-                </p>
-                <p className="font-mono text-sm text-white/70">
-                  {formatMoney(team.starting_capital)}
-                </p>
-              </div>
-              <Button
-                variant="danger"
-                onClick={() =>
-                  setTeams((current) =>
-                    current.filter((item) => item.id !== team.id),
-                  )
-                }
+      <div className="admin-card">
+        <div className="mb-5 flex flex-wrap justify-between gap-3">
+          <label className="search-box">
+            <Search size={15} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search firms"
+            />
+          </label>
+          <Button
+            onClick={() =>
+              setTeams((current) => [
+                ...current,
+                {
+                  id: crypto.randomUUID(),
+                  name: "New Venture",
+                  ticker: "NVCO",
+                  starting_capital: 100000,
+                  created_at: new Date().toISOString(),
+                  members: 0,
+                  netWorth: 100000,
+                  change: 0,
+                  history: [100, 100],
+                  initialRank: current.length + 1,
+                  lastAction: "Registered",
+                },
+              ])
+            }
+          >
+            <Plus size={15} /> New team
+          </Button>
+        </div>
+        <div className="divide-y divide-white/6">
+          {teams
+            .filter((t) => t.name.toLowerCase().includes(query.toLowerCase()))
+            .map((team) => (
+              <div
+                className="grid items-center gap-3 py-4 sm:grid-cols-[1fr_1fr_auto]"
+                key={team.id}
               >
-                Remove
-              </Button>
-            </div>
-          ))}
+                <div>
+                  <p className="text-sm text-white">{team.name}</p>
+                  <p className="text-xs text-white/30">{team.ticker}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/25">
+                    Starting capital
+                  </p>
+                  <p className="font-mono text-sm text-white/70">
+                    {formatMoney(team.starting_capital)}
+                  </p>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() =>
+                    setTeams((current) =>
+                      current.filter((item) => item.id !== team.id),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+        </div>
       </div>
     </div>
   )
@@ -1643,7 +1933,7 @@ function Footer({ navigate }: { navigate: (page: Page) => void }) {
         </div>
       </div>
       <div className="border-t border-white/5 py-5 text-center text-xs text-white/20">
-        © 2025 EBEC · Wall Street Night. Play smart.
+        © 2026 EBEC · Wall Street Night. Play smart.
       </div>
     </footer>
   )
@@ -1654,7 +1944,11 @@ export default function App() {
   const [teams, setTeams] = useState<Team[]>(mockTeams)
   const [events, setEvents] = useState<ScoreEvent[]>(mockEvents)
   const [games, setGames] = useState<Game[]>(mockGames)
+  const [participants, setParticipants] =
+    useState<Participant[]>(mockParticipants)
   const [selectedTeam, setSelectedTeam] = useState<Team>(mockTeams[0])
+  const [isLeaderboardAccessible, setIsLeaderboardAccessible] =
+    useState<boolean>(false)
 
   useEffect(() => {
     const onPop = () => setPage(pageFromPath())
@@ -1663,48 +1957,56 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (page !== "leaderboard") return
+    if (page !== "leaderboard" || !isLeaderboardAccessible) return
     const timer = window.setInterval(() => {
       setTeams((current) =>
-        current
-          .map((team, index) =>
-            index === 2
-              ? {
-                  ...team,
-                  netWorth: team.netWorth + 100,
-                  history: [...team.history.slice(-6), team.netWorth + 100],
-                }
-              : team,
-          )
-          .sort((a, b) => b.netWorth - a.netWorth),
+        current.map((team, index) =>
+          index === 2
+            ? {
+                ...team,
+                netWorth: team.netWorth + 100,
+                history: [...team.history.slice(-6), team.netWorth + 100],
+              }
+            : team,
+        ),
       )
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [page])
+  }, [page, isLeaderboardAccessible])
 
   const navigate = (next: Page) => {
     window.history.pushState({}, "", paths[next])
     setPage(next)
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
+
   const openTeam = (team: Team) => {
     setSelectedTeam(team)
     navigate("team")
   }
+
   const rankedTeams = useMemo(
     () =>
-      teams
+      [...teams]
         .map((team) => ({
           ...team,
           netWorth: calculateNetWorth(team, events),
         }))
-        .sort((a, b) => b.netWorth - a.netWorth),
+        .sort((a, b) => {
+          if (b.netWorth !== a.netWorth) {
+            return b.netWorth - a.netWorth
+          }
+          return a.name.localeCompare(b.name)
+        }),
     [teams, events],
   )
 
   return (
     <div className="min-h-screen bg-ink text-white">
-      <Navbar navigate={navigate} />
+      <Navbar
+        navigate={navigate}
+        isLeaderboardAccessible={isLeaderboardAccessible}
+      />
       {page === "home" && (
         <Landing
           navigate={navigate}
@@ -1717,12 +2019,18 @@ export default function App() {
         <Registration teams={teams} navigate={navigate} />
       )}
       {page === "leaderboard" && (
-        <Leaderboard teams={rankedTeams} events={events} openTeam={openTeam} />
+        <Leaderboard
+          teams={rankedTeams}
+          events={events}
+          openTeam={openTeam}
+          isAccessible={isLeaderboardAccessible}
+          navigate={navigate}
+        />
       )}
       {page === "team" && (
         <TeamPage
           team={selectedTeam}
-          participants={mockParticipants}
+          participants={participants}
           events={events}
         />
       )}
@@ -1731,10 +2039,13 @@ export default function App() {
           teams={teams}
           events={events}
           games={games}
-          participants={mockParticipants}
+          participants={participants}
+          isLeaderboardAccessible={isLeaderboardAccessible}
+          setIsLeaderboardAccessible={setIsLeaderboardAccessible}
           setTeams={setTeams}
           setEvents={setEvents}
           setGames={setGames}
+          setParticipants={setParticipants}
         />
       )}
       {page !== "admin" && <Footer navigate={navigate} />}

@@ -8,6 +8,8 @@ export interface Team {
   netWorth: number
   change: number
   history: number[]
+  initialRank?: number
+  lastAction?: string
 }
 
 export interface Participant {
@@ -47,9 +49,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(180),
     members: 4,
-    netWorth: 124850,
+    netWorth: 100000,
     change: 12.4,
     history: [100, 104, 103, 109, 112, 117, 124],
+    initialRank: 1,
   },
   {
     id: "2",
@@ -58,9 +61,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(175),
     members: 5,
-    netWorth: 121200,
+    netWorth: 100000,
     change: 9.8,
     history: [100, 102, 108, 107, 111, 118, 121],
+    initialRank: 3,
   },
   {
     id: "3",
@@ -69,9 +73,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(165),
     members: 4,
-    netWorth: 118600,
+    netWorth: 100000,
     change: 8.1,
     history: [100, 98, 104, 109, 108, 114, 118],
+    initialRank: 5,
   },
   {
     id: "4",
@@ -80,9 +85,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(150),
     members: 3,
-    netWorth: 114300,
+    netWorth: 100000,
     change: 5.6,
     history: [100, 102, 101, 106, 110, 112, 114],
+    initialRank: 2,
   },
   {
     id: "5",
@@ -91,9 +97,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(140),
     members: 5,
-    netWorth: 109850,
+    netWorth: 100000,
     change: -1.2,
     history: [100, 105, 108, 112, 111, 110, 109],
+    initialRank: 8,
   },
   {
     id: "6",
@@ -102,9 +109,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(130),
     members: 4,
-    netWorth: 106400,
+    netWorth: 100000,
     change: 2.3,
     history: [100, 99, 101, 104, 103, 105, 106],
+    initialRank: 6,
   },
   {
     id: "7",
@@ -113,9 +121,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(120),
     members: 4,
-    netWorth: 103250,
+    netWorth: 100000,
     change: -0.8,
     history: [100, 102, 104, 103, 105, 104, 103],
+    initialRank: 7,
   },
   {
     id: "8",
@@ -124,9 +133,10 @@ export const mockTeams: Team[] = [
     starting_capital: 100000,
     created_at: atMinutesAgo(110),
     members: 3,
-    netWorth: 99800,
+    netWorth: 100000,
     change: -2.1,
     history: [100, 103, 101, 102, 100, 101, 99],
+    initialRank: 4,
   },
 ]
 
@@ -243,6 +253,53 @@ export const formatMoney = (amount: number) =>
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(amount)
+
+export function getLastAction(
+  teamId: string,
+  events: ScoreEvent[],
+  defaultAction?: string
+): { text: string; type: "bonus" | "penalty" | "neutral" } {
+  const teamEvents = events.filter((event) => event.team_id === teamId)
+  if (teamEvents.length === 0) {
+    return {
+      text: defaultAction || "Registered",
+      type: "neutral",
+    }
+  }
+  const latest = teamEvents[0]
+  if (latest.type === "bonus") {
+    return {
+      text: `Got bonus (+${formatMoney(latest.amount)})`,
+      type: "bonus",
+    }
+  } else {
+    return {
+      text: `Got penalized (-${formatMoney(latest.amount)})`,
+      type: "penalty",
+    }
+  }
+}
+
+export function getRankChange(
+  initialRank: number,
+  currentRank: number
+): { text: string; diff: number } {
+  const diff = initialRank - currentRank
+  if (diff > 0) {
+    return {
+      text: `Climbed by ${diff} rank${diff > 1 ? "s" : ""}`,
+      diff,
+    }
+  } else if (diff < 0) {
+    const abs = Math.abs(diff)
+    return {
+      text: `Went down by ${abs} rank${abs > 1 ? "s" : ""}`,
+      diff,
+    }
+  } else {
+    return { text: "No change", diff: 0 }
+  }
+}
 
 export interface ScoreService {
   listTeams(): Promise<Team[]>
