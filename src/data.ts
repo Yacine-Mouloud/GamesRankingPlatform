@@ -43,8 +43,12 @@ export interface Settings {
   id: number
   is_leaderboard_accessible: boolean
   game_status: GameStatus
+  registration_opens_at?: string // added for the countdown
   updated_at?: string
 }
+
+// Used until settings.registration_opens_at is available, supposed as monday
+export const DEFAULT_REGISTRATION_OPENS_AT = "2026-10-05T00:00:00+01:00"
 
 export const calculateNetWorth = (team: Team, events: ScoreEvent[] = []) => {
   const starting = Number(team.starting_capital) || 100000

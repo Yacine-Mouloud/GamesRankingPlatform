@@ -9,6 +9,7 @@ import {
   BriefcaseBusiness,
   Check,
   ChevronRight,
+  CalendarClock,
   CircleDollarSign,
   Download,
   Gamepad2,
@@ -28,6 +29,7 @@ import {
 import logo from "./imports/ebecLogo.jpg"
 import { supabase } from "./utils/supabase"
 import {
+  DEFAULT_REGISTRATION_OPENS_AT,
   Game,
   GameStatus,
   Participant,
@@ -559,16 +561,135 @@ function Landing({
   )
 }
 
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), intervalMs)
+    return () => window.clearInterval(id)
+  }, [intervalMs])
+  return now
+}
+
+function RegistrationLocked({
+  phase,
+  opensAt,
+  now,
+  navigate,
+}: {
+  phase: "upcoming" | "closed"
+  opensAt: Date
+  now: number
+  navigate: (page: Page) => void
+}) {
+  const remaining = Math.max(0, opensAt.getTime() - now)
+  const units = [
+    ["Days", Math.floor(remaining / 86_400_000)],
+    ["Hours", Math.floor(remaining / 3_600_000) % 24],
+    ["Min", Math.floor(remaining / 60_000) % 60],
+    ["Sec", Math.floor(remaining / 1000) % 60],
+  ] as const
+
+  return (
+    <motion.div
+      key={phase}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex min-h-96 flex-col items-center justify-center text-center"
+    >
+      <div className="flex size-16 items-center justify-center rounded-2xl border border-gold/25 bg-gold/10 text-gold">
+        {phase === "upcoming" ? (
+          <CalendarClock size={30} />
+        ) : (
+          <LockKeyhole size={30} />
+        )}
+      </div>
+      {phase === "upcoming" ? (
+        <>
+          <p className="mt-6 text-xs uppercase tracking-[0.2em] text-white/35">
+            Registration desk
+          </p>
+          <h2 className="mt-2 font-display text-3xl text-white sm:text-4xl">
+            Registration opens{" "}
+            <span className="text-gold">
+              {opensAt.toLocaleDateString("en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              })}
+            </span>
+          </h2>
+          <p className="mt-3 max-w-sm text-sm text-white/50">
+            The market opens at{" "}
+            {opensAt.getHours() === 0 && opensAt.getMinutes() === 0
+              ? "midnight"
+              : opensAt.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+            . Come back then to secure your seat on the floor.
+          </p>
+          <div className="mt-8 grid w-full max-w-sm grid-cols-4 gap-2 sm:gap-3">
+            {units.map(([label, value]) => (
+              <div
+                className="rounded-xl border border-gold/15 bg-ink/60 py-3"
+                key={label}
+              >
+                <p className="font-mono text-2xl text-white sm:text-3xl">
+                  {String(value).padStart(2, "0")}
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-white/35">
+                  {label}
+                </p>
+              </div>
+            ))}
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => navigate("home")}
+            className="mt-8"
+          >
+            Back to home
+          </Button>
+        </>
+      ) : (
+        <>
+          <h2 className="mt-6 font-display text-3xl text-white sm:text-4xl">
+            Registration is <span className="text-gold">closed.</span>
+          </h2>
+          <p className="mt-3 max-w-sm text-sm text-white/50">
+            The trading floor is live and teams are locked in. Follow the
+            market from the leaderboard.
+          </p>
+          <Button onClick={() => navigate("leaderboard")} className="mt-8">
+            Visit the market <ArrowRight size={16} />
+          </Button>
+        </>
+      )}
+    </motion.div>
+  )
+}
+
 function Registration({
   navigate,
   onRegistered,
+  opensAt,
+  gameStatus,
 }: {
   navigate: (page: Page) => void
   onRegistered?: () => void
+  opensAt: Date
+  gameStatus: GameStatus
 }) {
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const now = useNow()
+  const phase =
+    gameStatus !== "setup"
+      ? "closed"
+      : now < opensAt.getTime()
+        ? "upcoming"
+        : "open"
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -653,7 +774,14 @@ function Registration({
           </div>
           <div className="p-6 sm:p-10 lg:p-12">
             <AnimatePresence mode="wait">
-              {!submitted ? (
+              {!submitted && phase !== "open" ? (
+                <RegistrationLocked
+                  phase={phase}
+                  opensAt={opensAt}
+                  now={now}
+                  navigate={navigate}
+                />
+              ) : !submitted ? (
                 <motion.form
                   key="form"
                   initial={{ opacity: 0 }}
@@ -2470,6 +2598,9 @@ export default function App() {
   const [isLeaderboardAccessible, setIsLeaderboardAccessible] =
     useState<boolean>(false)
   const [gameStatus, setGameStatus] = useState<GameStatus>("setup")
+  const [registrationOpensAt, setRegistrationOpensAt] = useState(
+    () => new Date(DEFAULT_REGISTRATION_OPENS_AT),
+  )
   const [, setLoadingInitial] = useState(true)
 
   // Navigation sync with browser history
@@ -2496,11 +2627,8 @@ export default function App() {
           .order("created_at", { ascending: false }),
         supabase.from("games").select("*").order("created_at"),
         supabase.from("participants").select("*"),
-        supabase
-          .from("settings")
-          .select("is_leaderboard_accessible, game_status")
-          .eq("id", 1)
-          .maybeSingle(),
+        // select("*") so this still works before registration_opens_at exists
+        supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
       ])
 
       if (teamsRes.data) setRawTeams(teamsRes.data)
@@ -2523,6 +2651,11 @@ export default function App() {
         )
         if (settingsRes.data.game_status) {
           setGameStatus(settingsRes.data.game_status as GameStatus)
+        }
+        if (settingsRes.data.registration_opens_at) {
+          setRegistrationOpensAt(
+            new Date(settingsRes.data.registration_opens_at),
+          )
         }
       }
     } catch (err) {
@@ -2581,6 +2714,14 @@ export default function App() {
             }
             if ("game_status" in payload.new && payload.new.game_status) {
               setGameStatus(payload.new.game_status as GameStatus)
+            }
+            if (
+              "registration_opens_at" in payload.new &&
+              payload.new.registration_opens_at
+            ) {
+              setRegistrationOpensAt(
+                new Date(payload.new.registration_opens_at),
+              )
             }
           }
           fetchData()
@@ -2686,7 +2827,12 @@ export default function App() {
         />
       )}
       {page === "register" && (
-        <Registration navigate={navigate} onRegistered={fetchData} />
+        <Registration
+          navigate={navigate}
+          onRegistered={fetchData}
+          opensAt={registrationOpensAt}
+          gameStatus={gameStatus}
+        />
       )}
       {page === "leaderboard" && (
         <Leaderboard

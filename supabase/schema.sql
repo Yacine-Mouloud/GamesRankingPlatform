@@ -52,6 +52,7 @@ create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
   is_leaderboard_accessible boolean not null default false,
   game_status text not null default 'setup' check (game_status in ('setup', 'live', 'ended')),
+  registration_opens_at timestamptz not null default '2026-10-05 00:00:00+01',
   updated_at timestamptz not null default now()
 );
 
@@ -260,10 +261,24 @@ create policy "Allow admins delete on score_events"
   using (public.is_admin());
 
 -- Participants policies
+-- Registration is open from settings.registration_opens_at until the game starts.
+-- Public sign-ups cannot choose a team; admins can add participants any time.
 drop policy if exists "Allow anyone to register" on public.participants;
-create policy "Allow anyone to register"
+drop policy if exists "Allow registration while open" on public.participants;
+create policy "Allow registration while open"
   on public.participants for insert
-  with check (true);
+  with check (
+    public.is_admin()
+    or (
+      team_id is null
+      and exists (
+        select 1 from public.settings
+        where id = 1
+          and game_status = 'setup'
+          and now() >= registration_opens_at
+      )
+    )
+  );
 
 drop policy if exists "Allow admins to read all participants" on public.participants;
 create policy "Allow admins to read all participants"
