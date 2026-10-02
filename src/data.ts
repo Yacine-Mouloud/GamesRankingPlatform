@@ -1,3 +1,5 @@
+export type GameStatus = "setup" | "live" | "ended"
+
 export interface Team {
   id: string
   name: string
@@ -40,6 +42,7 @@ export interface ScoreEvent {
 export interface Settings {
   id: number
   is_leaderboard_accessible: boolean
+  game_status: GameStatus
   updated_at?: string
 }
 

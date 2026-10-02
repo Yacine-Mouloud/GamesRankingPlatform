@@ -51,6 +51,7 @@ create table if not exists public.admins (
 create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
   is_leaderboard_accessible boolean not null default false,
+  game_status text not null default 'setup' check (game_status in ('setup', 'live', 'ended')),
   updated_at timestamptz not null default now()
 );
 
@@ -74,7 +75,7 @@ as $$
   );
 $$;
 
--- Create Equal Teams & reset score events
+-- Create Equal Teams & reset score events (Moves setup -> live)
 create or replace function public.create_equal_teams()
 returns json
 language plpgsql
@@ -86,12 +87,22 @@ declare
   v_participant_count int;
   v_team_ids uuid[];
   v_participant_ids uuid[];
+  v_current_status text;
   i int;
   v_assigned_team_id uuid;
 begin
   -- Require admin privileges
   if not public.is_admin() then
     raise exception 'Unauthorized: Admin privileges required';
+  end if;
+
+  -- Check current game status in settings
+  select game_status into v_current_status
+  from public.settings
+  where id = 1;
+
+  if v_current_status is not null and v_current_status <> 'setup' then
+    raise exception 'Game already started. Teams cannot be recreated.';
   end if;
 
   -- Reset all score events
@@ -124,16 +135,52 @@ begin
     end loop;
   end if;
 
-  -- Unlock the leaderboard in settings
-  insert into public.settings (id, is_leaderboard_accessible, updated_at)
-  values (1, true, now())
+  -- Move status from setup to live and unlock the leaderboard in settings
+  insert into public.settings (id, is_leaderboard_accessible, game_status, updated_at)
+  values (1, true, 'live', now())
   on conflict (id) do update
-  set is_leaderboard_accessible = true, updated_at = now();
+  set is_leaderboard_accessible = true, game_status = 'live', updated_at = now();
 
   return json_build_object(
     'success', true,
     'assigned_count', v_participant_count,
     'team_count', v_team_count
+  );
+end;
+$$;
+
+-- End Game function (Moves live -> ended)
+create or replace function public.end_game()
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_current_status text;
+begin
+  -- Require admin privileges
+  if not public.is_admin() then
+    raise exception 'Unauthorized: Admin privileges required';
+  end if;
+
+  -- Check current game status
+  select game_status into v_current_status
+  from public.settings
+  where id = 1;
+
+  if v_current_status <> 'live' then
+    raise exception 'Cannot end game: Game is not currently live.';
+  end if;
+
+  -- Move status to ended and keep leaderboard accessible
+  update public.settings
+  set game_status = 'ended', is_leaderboard_accessible = true, updated_at = now()
+  where id = 1;
+
+  return json_build_object(
+    'success', true,
+    'game_status', 'ended'
   );
 end;
 $$;
@@ -313,9 +360,11 @@ alter table public.settings replica identity full;
 -- 7. Seed Initial Data
 
 -- Seed Settings
-insert into public.settings (id, is_leaderboard_accessible)
-values (1, false)
-on conflict (id) do nothing;
+insert into public.settings (id, is_leaderboard_accessible, game_status)
+values (1, false, 'setup')
+on conflict (id) do update
+set is_leaderboard_accessible = excluded.is_leaderboard_accessible,
+    game_status = excluded.game_status;
 
 -- Seed Preset Teams (8 teams)
 insert into public.teams (name, ticker, starting_capital)

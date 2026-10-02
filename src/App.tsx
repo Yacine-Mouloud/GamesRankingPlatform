@@ -29,6 +29,7 @@ import logo from "./imports/ebecLogo.jpg"
 import { supabase } from "./utils/supabase"
 import {
   Game,
+  GameStatus,
   Participant,
   ScoreEvent,
   Team,
@@ -797,12 +798,14 @@ function Leaderboard({
   events,
   openTeam,
   isAccessible,
+  gameStatus = "setup",
   navigate,
 }: {
   teams: Team[]
   events: ScoreEvent[]
   openTeam: (team: Team) => void
   isAccessible: boolean
+  gameStatus?: GameStatus
   navigate: (page: Page) => void
 }) {
   const [query, setQuery] = useState("")
@@ -847,22 +850,42 @@ function Leaderboard({
         <div className="mb-10 flex flex-wrap items-end justify-between gap-5">
           <div>
             <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-gain">
-              <span className="live-dot bg-gain" /> Live market
+              {gameStatus === "ended" ? (
+                <>
+                  <span className="live-dot bg-gold" />
+                  <span className="text-gold">Market Closed</span>
+                  <span className="rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[10px] font-semibold text-gold">
+                    Final results
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="live-dot bg-gain" /> Live market
+                </>
+              )}
             </div>
             <h1 className="font-display text-4xl text-white sm:text-5xl">
-              The leaderboard
+              {gameStatus === "ended" ? "Final Standings" : "The leaderboard"}
             </h1>
             <p className="mt-3 text-white/45">
-              Every point counts. Every position is live.
+              {gameStatus === "ended"
+                ? "The market has closed. Final portfolio valuations are locked."
+                : "Every point counts. Every position is live."}
             </p>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3 text-right">
             <p className="text-[10px] uppercase tracking-widest text-white/30">
               Market status
             </p>
-            <p className="mt-1 flex items-center gap-2 text-sm text-white">
-              <Activity size={14} className="text-gain" /> Realtime connected
-            </p>
+            {gameStatus === "ended" ? (
+              <p className="mt-1 flex items-center gap-2 text-sm text-gold">
+                <LockKeyhole size={14} className="text-gold" /> Final results locked
+              </p>
+            ) : (
+              <p className="mt-1 flex items-center gap-2 text-sm text-white">
+                <Activity size={14} className="text-gain" /> Realtime connected
+              </p>
+            )}
           </div>
         </div>
         <div className="mb-12 mx-auto max-w-4xl">
@@ -874,7 +897,11 @@ function Leaderboard({
               <h2 className="font-display text-xl text-white">
                 Market positions
               </h2>
-              <p className="text-xs text-white/35">Updated in realtime</p>
+              <p className="text-xs text-white/35">
+                {gameStatus === "ended"
+                  ? "Official final standings"
+                  : "Updated in realtime"}
+              </p>
             </div>
             <label className="search-box">
               <Search size={16} />
@@ -1219,6 +1246,7 @@ function Admin({
   games,
   participants,
   isLeaderboardAccessible,
+  gameStatus,
   refetchData,
 }: {
   teams: Team[]
@@ -1226,10 +1254,12 @@ function Admin({
   games: Game[]
   participants: Participant[]
   isLeaderboardAccessible: boolean
+  gameStatus: GameStatus
   refetchData: () => Promise<void>
 }) {
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [tab, setTab] = useState<AdminTab>("overview")
+  const [freeze, setFreeze] = useState(false)
   const [notice, setNotice] = useState("")
   const [loadingAction, setLoadingAction] = useState(false)
 
@@ -1276,15 +1306,61 @@ function Admin({
   }
 
   const createEqualTeams = async () => {
+    if (gameStatus !== "setup") {
+      setNotice("⚠️ Game has already started. Teams cannot be created again.")
+      return
+    }
     setLoadingAction(true)
     try {
       const { error } = await supabase.rpc("create_equal_teams")
       if (error) {
-        setNotice(`⚠️ Error creating equal teams: ${error.message}`)
+        if (
+          error.message?.toLowerCase().includes("already started") ||
+          error.message?.toLowerCase().includes("cannot")
+        ) {
+          await refetchData()
+          setNotice("⚠️ Game already started. Switching to active phase.")
+        } else {
+          setNotice(`⚠️ Error creating equal teams: ${error.message}`)
+        }
       } else {
         await refetchData()
         setNotice(
-          "🎲 Equal teams distributed randomly across alphabetical teams! Scores reset & leaderboard opened.",
+          "🎲 Equal teams distributed randomly across alphabetical teams! Game is now live.",
+        )
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.toLowerCase().includes("already started")) {
+        await refetchData()
+        setNotice("⚠️ Game already started.")
+      } else {
+        setNotice(`⚠️ Action failed: ${msg}`)
+      }
+    } finally {
+      setLoadingAction(false)
+    }
+  }
+
+  const endGame = async () => {
+    if (gameStatus !== "live") {
+      setNotice("⚠️ Cannot end game: Game is not currently live.")
+      return
+    }
+    const confirmed = window.confirm(
+      "End the game? Scoring will be locked and final results will be published.",
+    )
+    if (!confirmed) return
+
+    setLoadingAction(true)
+    try {
+      const { error } = await supabase.rpc("end_game")
+      if (error) {
+        setNotice(`⚠️ Error ending game: ${error.message}`)
+      } else {
+        await refetchData()
+        setNotice(
+          "🏁 The game has ended. Scoring is locked and final standings are published.",
         )
       }
     } catch (err: unknown) {
@@ -1296,6 +1372,10 @@ function Admin({
   }
 
   const toggleLeaderboardAccess = async () => {
+    if (gameStatus === "ended" && isLeaderboardAccessible) {
+      setNotice("⚠️ Board Access cannot be locked once the game has ended.")
+      return
+    }
     const next = !isLeaderboardAccessible
     const { error } = await supabase
       .from("settings")
@@ -1319,6 +1399,15 @@ function Admin({
 
   const addScore = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (gameStatus !== "live") {
+      setNotice(
+        gameStatus === "setup"
+          ? "⚠️ Scoring opens when the game starts."
+          : "⚠️ Scoring is locked because the game has ended.",
+      )
+      return
+    }
+
     const form = new FormData(event.currentTarget)
     const teamId = String(form.get("team"))
     const gameId = String(form.get("game")) || null
@@ -1342,6 +1431,10 @@ function Admin({
   }
 
   const undoLastScore = async () => {
+    if (gameStatus !== "live") {
+      setNotice("⚠️ Cannot undo transactions when game is not live.")
+      return
+    }
     if (!events.length) return
     const latest = events[0]
     const { error } = await supabase
@@ -1371,7 +1464,7 @@ function Admin({
                 <ShieldCheck size={14} /> Admin session
               </p>
               <p className="mt-2 text-xs text-white/35">
-                Realtime controls and database connected.
+                Phase: <span className="font-semibold uppercase text-gold">{gameStatus}</span>
               </p>
             </div>
             <button
@@ -1397,11 +1490,12 @@ function Admin({
                   <button
                     type="button"
                     onClick={toggleLeaderboardAccess}
+                    disabled={gameStatus === "ended"}
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                       isLeaderboardAccessible
                         ? "border border-gain/30 bg-gain/15 text-gain"
                         : "border border-gold/30 bg-gold/15 text-gold"
-                    }`}
+                    } ${gameStatus === "ended" ? "cursor-not-allowed opacity-80" : ""}`}
                   >
                     {isLeaderboardAccessible ? (
                       <>
@@ -1414,10 +1508,40 @@ function Admin({
                     )}
                   </button>
                 </div>
-                <Button onClick={createEqualTeams} disabled={loadingAction}>
-                  <Sparkles size={14} />
-                  {loadingAction ? "Distributing..." : "Create Equal Teams"}
-                </Button>
+
+                {gameStatus === "setup" && (
+                  <Button onClick={createEqualTeams} disabled={loadingAction}>
+                    <Sparkles size={14} />
+                    {loadingAction ? "Distributing..." : "Create Equal Teams"}
+                  </Button>
+                )}
+                {gameStatus === "live" && (
+                  <Button
+                    variant="danger"
+                    onClick={endGame}
+                    disabled={loadingAction}
+                  >
+                    <LockKeyhole size={14} />
+                    {loadingAction ? "Ending Game..." : "End Game"}
+                  </Button>
+                )}
+                {gameStatus === "ended" && (
+                  <button
+                    disabled
+                    className="btn btn-secondary opacity-60 cursor-not-allowed"
+                  >
+                    <Check size={14} /> Game Ended
+                  </button>
+                )}
+
+                <button
+                  aria-label="Freeze leaderboard"
+                  aria-pressed={freeze}
+                  onClick={() => setFreeze(!freeze)}
+                  className={`toggle ${freeze ? "toggle-on" : ""}`}
+                >
+                  <span />
+                </button>
                 <button
                   onClick={handleSignOut}
                   className="lg:hidden inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60 hover:text-white"
@@ -1453,7 +1577,10 @@ function Admin({
             {tab === "teams" && (
               <TeamsPanel
                 teams={teams}
-                createRandomTeams={createEqualTeams}
+                gameStatus={gameStatus}
+                createEqualTeams={createEqualTeams}
+                endGame={endGame}
+                loadingAction={loadingAction}
                 refetchData={refetchData}
               />
             )}
@@ -1469,6 +1596,7 @@ function Admin({
                 teams={teams}
                 games={games}
                 events={events}
+                gameStatus={gameStatus}
                 onSubmit={addScore}
                 undo={undoLastScore}
               />
@@ -1737,28 +1865,37 @@ function AdminOverview({
 
 function TeamsPanel({
   teams,
-  createRandomTeams,
+  gameStatus,
+  createEqualTeams,
+  endGame,
+  loadingAction,
   refetchData,
 }: {
   teams: Team[]
-  createRandomTeams: () => void
+  gameStatus: GameStatus
+  createEqualTeams: () => Promise<void>
+  endGame: () => Promise<void>
+  loadingAction: boolean
   refetchData: () => Promise<void>
 }) {
   const [query, setQuery] = useState("")
   const [isAdding, setIsAdding] = useState(false)
 
   const handleAddTeam = async () => {
+    if (gameStatus !== "setup") return
     const name = prompt("Enter new team name:")
     if (!name?.trim()) return
     const ticker =
       prompt("Enter team ticker (3-4 chars):")?.toUpperCase().trim() ||
       name.slice(0, 4).toUpperCase()
 
+    setIsAdding(true)
     const { error } = await supabase.from("teams").insert({
       name: name.trim(),
       ticker: ticker,
       starting_capital: 100000,
     })
+    setIsAdding(false)
     if (error) {
       alert(`Error creating team: ${error.message}`)
     } else {
@@ -1767,6 +1904,7 @@ function TeamsPanel({
   }
 
   const handleRemoveTeam = async (id: string, name: string) => {
+    if (gameStatus !== "setup") return
     if (!confirm(`Are you sure you want to delete team "${name}"?`)) return
     const { error } = await supabase.from("teams").delete().eq("id", id)
     if (error) {
@@ -1782,18 +1920,53 @@ function TeamsPanel({
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h3 className="flex items-center gap-2 font-display text-xl text-gold">
-              <Sparkles size={20} /> Random Syndicate Equalization
+              {gameStatus === "setup" && (
+                <>
+                  <Sparkles size={20} /> Random Syndicate Equalization
+                </>
+              )}
+              {gameStatus === "live" && (
+                <>
+                  <Activity size={20} /> Active Syndicate Session
+                </>
+              )}
+              {gameStatus === "ended" && (
+                <>
+                  <Trophy size={20} /> Final Syndicate Standings
+                </>
+              )}
             </h3>
             <p className="mt-2 max-w-2xl text-xs leading-relaxed text-white/60">
-              Shuffles all registered participants randomly and assigns them
-              into equal-sized teams. Teams are stacked in{" "}
-              <strong>alphabetical order</strong>, score events are reset, and
-              the leaderboard is unlocked.
+              {gameStatus === "setup" &&
+                "Shuffles all registered participants randomly and assigns them into equal-sized teams. Teams are stacked in alphabetical order, score events are reset, and the leaderboard is unlocked."}
+              {gameStatus === "live" && "Game in progress. Teams are locked."}
+              {gameStatus === "ended" && "Final results. Scoring is locked."}
             </p>
           </div>
-          <Button onClick={createRandomTeams}>
-            <Sparkles size={15} /> Create Equal Teams & Open Board
-          </Button>
+          {gameStatus === "setup" && (
+            <Button onClick={createEqualTeams} disabled={loadingAction}>
+              <Sparkles size={15} />{" "}
+              {loadingAction ? "Distributing..." : "Create Equal Teams & Open Board"}
+            </Button>
+          )}
+          {gameStatus === "live" && (
+            <Button
+              variant="danger"
+              onClick={endGame}
+              disabled={loadingAction}
+            >
+              <LockKeyhole size={15} />{" "}
+              {loadingAction ? "Ending Game..." : "End Game"}
+            </Button>
+          )}
+          {gameStatus === "ended" && (
+            <button
+              disabled
+              className="btn btn-secondary opacity-60 cursor-not-allowed"
+            >
+              <Check size={15} /> Game Ended
+            </button>
+          )}
         </div>
       </div>
       <div className="admin-card">
@@ -1806,7 +1979,11 @@ function TeamsPanel({
               placeholder="Search firms"
             />
           </label>
-          <Button onClick={handleAddTeam} disabled={isAdding}>
+          <Button
+            onClick={handleAddTeam}
+            disabled={isAdding || gameStatus !== "setup"}
+            className={gameStatus !== "setup" ? "opacity-50 cursor-not-allowed" : ""}
+          >
             <Plus size={15} /> New team
           </Button>
         </div>
@@ -1832,6 +2009,7 @@ function TeamsPanel({
                 </div>
                 <Button
                   variant="danger"
+                  disabled={gameStatus !== "setup"}
                   onClick={() => handleRemoveTeam(team.id, team.name)}
                 >
                   Remove
@@ -1994,15 +2172,19 @@ function ScoringPanel({
   teams,
   games,
   events,
+  gameStatus,
   onSubmit,
   undo,
 }: {
   teams: Team[]
   games: Game[]
   events: ScoreEvent[]
+  gameStatus: GameStatus
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   undo: () => void
 }) {
+  const isLive = gameStatus === "live"
+
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_.65fr]">
       <form onSubmit={onSubmit} className="admin-card">
@@ -2010,7 +2192,7 @@ function ScoringPanel({
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="field-label">
             Team
-            <select className="field-control" name="team" required>
+            <select className="field-control" name="team" required disabled={!isLive}>
               {teams.map((t) => (
                 <option value={t.id} key={t.id}>
                   {t.name}
@@ -2020,7 +2202,7 @@ function ScoringPanel({
           </label>
           <label className="field-label">
             Game
-            <select className="field-control" name="game">
+            <select className="field-control" name="game" disabled={!isLive}>
               {games.map((g) => (
                 <option value={g.id} key={g.id}>
                   {g.name}
@@ -2038,19 +2220,29 @@ function ScoringPanel({
               min="1"
               required
               placeholder="500"
+              disabled={!isLive}
             />
           </label>
           <label className="field-label">
             Type
-            <select className="field-control" name="type" required>
+            <select className="field-control" name="type" required disabled={!isLive}>
               <option value="bonus">Bonus</option>
               <option value="penalty">Penalty</option>
             </select>
           </label>
         </div>
-        <Button type="submit" className="mt-6">
-          <Check size={16} /> Confirm score
-        </Button>
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button type="submit" disabled={!isLive}>
+            <Check size={16} /> Confirm score
+          </Button>
+          {!isLive && (
+            <span className="text-xs text-gold/90 font-medium">
+              {gameStatus === "setup"
+                ? "Scoring opens when the game starts"
+                : "Scoring is locked"}
+            </span>
+          )}
+        </div>
       </form>
       <div className="admin-card">
         <h2 className="font-display text-xl text-white">Last action</h2>
@@ -2079,11 +2271,18 @@ function ScoringPanel({
         <Button
           variant="secondary"
           onClick={undo}
-          disabled={!events.length}
+          disabled={!isLive || !events.length}
           className="mt-4 w-full justify-center"
         >
           Undo last action
         </Button>
+        {!isLive && (
+          <p className="mt-2 text-center text-xs text-white/40">
+            {gameStatus === "setup"
+              ? "Scoring opens when the game starts"
+              : "Scoring is locked"}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -2270,7 +2469,8 @@ export default function App() {
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [isLeaderboardAccessible, setIsLeaderboardAccessible] =
     useState<boolean>(false)
-  const [loadingInitial, setLoadingInitial] = useState(true)
+  const [gameStatus, setGameStatus] = useState<GameStatus>("setup")
+  const [, setLoadingInitial] = useState(true)
 
   // Navigation sync with browser history
   useEffect(() => {
@@ -2298,7 +2498,7 @@ export default function App() {
         supabase.from("participants").select("*"),
         supabase
           .from("settings")
-          .select("is_leaderboard_accessible")
+          .select("is_leaderboard_accessible, game_status")
           .eq("id", 1)
           .maybeSingle(),
       ])
@@ -2321,6 +2521,9 @@ export default function App() {
         setIsLeaderboardAccessible(
           Boolean(settingsRes.data.is_leaderboard_accessible),
         )
+        if (settingsRes.data.game_status) {
+          setGameStatus(settingsRes.data.game_status as GameStatus)
+        }
       }
     } catch (err) {
       console.error("Error loading Supabase data:", err)
@@ -2370,13 +2573,17 @@ export default function App() {
         "postgres_changes",
         { event: "*", schema: "public", table: "settings" },
         (payload) => {
-          if (payload.new && "is_leaderboard_accessible" in payload.new) {
-            setIsLeaderboardAccessible(
-              Boolean(payload.new.is_leaderboard_accessible),
-            )
-          } else {
-            fetchData()
+          if (payload.new) {
+            if ("is_leaderboard_accessible" in payload.new) {
+              setIsLeaderboardAccessible(
+                Boolean(payload.new.is_leaderboard_accessible),
+              )
+            }
+            if ("game_status" in payload.new && payload.new.game_status) {
+              setGameStatus(payload.new.game_status as GameStatus)
+            }
           }
+          fetchData()
         },
       )
       .subscribe()
@@ -2487,6 +2694,7 @@ export default function App() {
           events={events}
           openTeam={openTeam}
           isAccessible={isLeaderboardAccessible}
+          gameStatus={gameStatus}
           navigate={navigate}
         />
       )}
@@ -2504,6 +2712,7 @@ export default function App() {
           games={games}
           participants={participants}
           isLeaderboardAccessible={isLeaderboardAccessible}
+          gameStatus={gameStatus}
           refetchData={fetchData}
         />
       )}
