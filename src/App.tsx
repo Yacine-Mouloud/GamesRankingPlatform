@@ -313,8 +313,8 @@ function Landing({
               Make your first <span>million.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/60">
-              Strategy, nerve, and a little market magic. Build your empire at
-              EBEC's most ambitious entrepreneurship night.
+              Every student starts as an intern with $10,000. Pitch, trade, and
+              take risks all day. The richest player wins the VIP Golden Card.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
               <Button
@@ -466,20 +466,20 @@ function Landing({
               [
                 BriefcaseBusiness,
                 "01",
-                "Build your firm",
-                "Register individually, get drafted into balanced trading syndicates, and claim starting capital.",
+                "Start as an intern",
+                "Register, then walk in with $10,000 in club dollars. Everyone starts equal.",
               ],
               [
                 Gamepad2,
                 "02",
                 "Play the market",
-                "Compete through high-stakes business games, pitches, and bonus rounds.",
+                "Pitch, negotiate, and take on every department's challenge. Earn big, risk it, or lose it.",
               ],
               [
                 Trophy,
                 "03",
-                "Ring the bell",
-                "Grow your net worth. The richest portfolio takes the floor—and the glory.",
+                "Close the big deal",
+                "The 6 richest players reach the final. The winner takes the VIP Golden Card and picks their department.",
               ],
             ].map(([Icon, number, title, copy]) => {
               const CardIcon = Icon as typeof Trophy
@@ -513,16 +513,16 @@ function Landing({
       <section className="section-wrap">
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <div>
-            <p className="eyebrow">Four markets. One winner.</p>
+            <p className="eyebrow">Four phases. One winner.</p>
             <h2 className="section-title text-left">
               Think fast.
               <br />
               <span className="text-gold">Trade smarter.</span>
             </h2>
             <p className="mt-5 max-w-lg leading-relaxed text-white/55">
-              From hostile takeovers to the pitch floor, every round tests a
-              different business instinct. There are no spectators on Wall
-              Street.
+              From selling a broken umbrella to closing a deal with a tough
+              client, every phase tests a different business instinct. There
+              are no spectators on Wall Street.
             </p>
             <Button
               variant="secondary"
@@ -534,10 +534,10 @@ function Landing({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {[
-              [BarChart3, "Market Mayhem", "Trade against the clock"],
-              [Target, "The Big Pitch", "Sell the impossible"],
-              [CircleDollarSign, "Capital Rush", "Invest with conviction"],
-              [Sparkles, "Bonus Bell", "Expect the unexpected"],
+              [Target, "Warm-up", "Pitch the absurd, survive the crash"],
+              [BriefcaseBusiness, "Department Stations", "One challenge per department"],
+              [BarChart3, "The Market Crash", "Breaking news shakes the board"],
+              [Trophy, "The Big Deal", "Six finalists, one Golden Card"],
             ].map(([Icon, name, copy], index) => {
               const GameIcon = Icon as typeof Trophy
               return (
@@ -750,15 +750,15 @@ function Registration({
                 <span className="text-gold">awaits.</span>
               </h1>
               <p className="mt-5 text-white/55">
-                Individual registration. Equal syndicate distribution by the
-                trading desk.
+                Individual registration. Play solo, team up when the game
+                calls for it.
               </p>
             </div>
             <div className="relative z-10 mt-16 hidden lg:block">
               {[
                 "Free entry",
-                "Balanced trading syndicates",
-                "Starting capital included ($100k)",
+                "$10,000 starting capital",
+                "VIP Golden Card for the winner",
               ].map((item) => (
                 <div
                   className="mb-3 flex items-center gap-3 text-sm text-white/65"
@@ -829,7 +829,6 @@ function Registration({
                   </Button>
                   <p className="mt-4 text-center text-xs text-white/30">
                     By registering, you agree to play boldly and trade fairly.
-                    Teams are assigned by the trading desk.
                   </p>
                 </motion.form>
               ) : (
@@ -847,8 +846,8 @@ function Registration({
                     You're on the floor.
                   </h2>
                   <p className="mt-3 max-w-sm text-white/50">
-                    Registration confirmed. Watch your inbox for the market
-                    briefing and syndicate assignment.
+                    Registration confirmed. Your $10,000 is waiting for you on
+                    October 7.
                   </p>
                   <Button
                     onClick={() => navigate("leaderboard")}
@@ -952,8 +951,7 @@ function Leaderboard({
             Leaderboard Currently Inaccessible
           </h1>
           <p className="mt-4 text-sm leading-relaxed text-white/55">
-            The ranking board is hidden until team registrations and syndicate
-            assignments are completed.
+            The ranking board unlocks when the opening bell rings on October 7.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <Button onClick={() => navigate("home")} variant="secondary">
