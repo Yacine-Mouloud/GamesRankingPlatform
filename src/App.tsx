@@ -10,10 +10,10 @@ import {
   Check,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   Download,
   Gamepad2,
   LockKeyhole,
+  LogOut,
   Menu,
   Plus,
   Search,
@@ -23,10 +23,10 @@ import {
   TrendingUp,
   Trophy,
   Users,
-  WalletCards,
   X,
 } from "lucide-react"
 import logo from "./imports/ebecLogo.jpg"
+import { supabase } from "./utils/supabase"
 import {
   Game,
   Participant,
@@ -36,10 +36,6 @@ import {
   formatMoney,
   getLastAction,
   getRankChange,
-  mockEvents,
-  mockGames,
-  mockParticipants,
-  mockTeams,
 } from "./data"
 
 type Page = "home" | "register" | "leaderboard" | "team" | "admin"
@@ -58,7 +54,7 @@ const paths: Record<Page, string> = {
   home: "/",
   register: "/register",
   leaderboard: "/leaderboard",
-  team: "/team/1",
+  team: "/team",
   admin: "/admin",
 }
 
@@ -68,18 +64,21 @@ function Button({
   variant = "primary",
   type = "button",
   className = "",
+  disabled = false,
 }: {
   children: ReactNode
   onClick?: () => void
   variant?: "primary" | "secondary" | "ghost" | "danger"
   type?: "button" | "submit"
   className?: string
+  disabled?: boolean
 }) {
   return (
     <button
       type={type}
       onClick={onClick}
-      className={`btn btn-${variant} ${className}`}
+      disabled={disabled}
+      className={`btn btn-${variant} ${disabled ? "opacity-50 cursor-not-allowed" : ""} ${className}`}
     >
       {children}
     </button>
@@ -96,9 +95,7 @@ function Logo({ compact = false }: { compact?: boolean }) {
         <span className="font-display text-lg font-semibold tracking-wide text-white">
           Wall Street
         </span>
-        <span className="ml-1 font-display text-lg text-gold">
-          Night
-        </span>
+        <span className="ml-1 font-display text-lg text-gold">Night</span>
       </div>
     </div>
   )
@@ -186,12 +183,32 @@ function Navbar({
   )
 }
 
-function Ticker({ events }: { events: ScoreEvent[] }) {
-  const labels = [...events, ...events].map((event, index) => {
-    const team = mockTeams.find((item) => item.id === event.team_id)
+function Ticker({
+  events,
+  teams,
+}: {
+  events: ScoreEvent[]
+  teams: Team[]
+}) {
+  if (!events.length) {
+    return (
+      <div className="ticker" aria-label="Latest scoring activity">
+        <div className="ticker-track">
+          <span className="ticker-item">
+            <span className="text-gold">WSN MARKET</span>
+            <span className="text-white/45">Waiting for opening bell...</span>
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const displayList = events.length < 4 ? [...events, ...events, ...events] : [...events, ...events]
+  const labels = displayList.map((event, index) => {
+    const team = teams.find((item) => item.id === event.team_id)
     return (
       <span className="ticker-item" key={`${event.id}-${index}`}>
-        <span className="text-white/55">{team?.ticker}</span>
+        <span className="text-white/55">{team?.ticker || "FIRM"}</span>
         <span className={event.type === "penalty" ? "text-loss" : "text-gain"}>
           {event.type === "penalty" ? "−" : "+"}
           {formatMoney(event.amount)}
@@ -216,11 +233,14 @@ function Podium({
   teams: Team[]
   onTeam: (team: Team) => void
 }) {
-  const order = [teams[1], teams[0], teams[2]]
+  if (!teams || teams.length === 0) {
+    return null
+  }
+  const top3 = [teams[1], teams[0], teams[2]].filter(Boolean)
   return (
     <div className="grid grid-cols-3 items-end gap-2 sm:gap-4">
-      {order.map((team, index) => {
-        const rank = index === 0 ? 2 : index === 1 ? 1 : 3
+      {top3.map((team, index) => {
+        const rank = index === 0 && teams[1] ? 2 : index === 1 || !teams[1] ? 1 : 3
         return (
           <motion.button
             whileHover={{ y: -5 }}
@@ -267,7 +287,6 @@ function Landing({
   navigate,
   teams,
   events,
-  openTeam,
 }: {
   navigate: (page: Page) => void
   teams: Team[]
@@ -299,7 +318,7 @@ function Landing({
                 onClick={() => navigate("register")}
                 className="px-6 py-3.5"
               >
-                Register your team <ArrowRight size={17} />
+                Register as participant <ArrowRight size={17} />
               </Button>
               <Button
                 onClick={() => navigate("leaderboard")}
@@ -309,7 +328,6 @@ function Landing({
                 View live market <Activity size={17} />
               </Button>
             </div>
-            
           </motion.div>
           <motion.div
             initial={{ opacity: 0, scale: 0.94 }}
@@ -353,7 +371,6 @@ function Landing({
                     <TrendingUp size={16} /> +24.85% tonight
                   </p>
                 </div>
-            
               </div>
 
               <div className="hero-chart">
@@ -365,7 +382,13 @@ function Landing({
                   aria-label="Animated rising stock market chart"
                 >
                   <defs>
-                    <linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient
+                      id="heroChartFill"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
                       <stop offset="0%" stopColor="#F5C542" stopOpacity=".3" />
                       <stop offset="100%" stopColor="#F5C542" stopOpacity="0" />
                     </linearGradient>
@@ -393,7 +416,11 @@ function Landing({
                     filter="url(#heroChartGlow)"
                     initial={{ pathLength: 0 }}
                     animate={{ pathLength: 1 }}
-                    transition={{ duration: 2.2, ease: "easeInOut", delay: 0.25 }}
+                    transition={{
+                      duration: 2.2,
+                      ease: "easeInOut",
+                      delay: 0.25,
+                    }}
                   />
                   <motion.circle
                     cx="520"
@@ -422,13 +449,11 @@ function Landing({
                     Entrepreneurship exchange
                   </p>
                 </div>
-                
               </div>
             </div>
           </motion.div>
         </div>
       </section>
-      
 
       <section className="border-y border-white/6 bg-white/[0.015]">
         <div className="section-wrap">
@@ -439,7 +464,7 @@ function Landing({
                 BriefcaseBusiness,
                 "01",
                 "Build your firm",
-                "Register your team, pick a sharp name, and claim your starting capital.",
+                "Register individually, get drafted into balanced trading syndicates, and claim starting capital.",
               ],
               [
                 Gamepad2,
@@ -528,31 +553,69 @@ function Landing({
           </div>
         </div>
       </section>
-      <Ticker events={events} />
+      <Ticker events={events} teams={teams} />
     </main>
   )
 }
 
 function Registration({
-  teams,
   navigate,
+  onRegistered,
 }: {
-  teams: Team[]
   navigate: (page: Page) => void
+  onRegistered?: () => void
 }) {
   const [submitted, setSubmitted] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setErrors({})
     const data = new FormData(event.currentTarget)
+    const fullName = String(data.get("fullName") || "").trim()
+    const email = String(data.get("email") || "").trim().toLowerCase()
+
     const nextErrors: Record<string, string> = {}
-    if (!data.get("fullName")) nextErrors.fullName = "Tell us who you are."
-    if (!String(data.get("email")).includes("@"))
-      nextErrors.email = "Enter a valid email."
-    if (!data.get("team")) nextErrors.team = "Choose or create a team."
-    setErrors(nextErrors)
-    if (!Object.keys(nextErrors).length) setSubmitted(true)
+    if (!fullName) nextErrors.fullName = "Tell us who you are."
+    if (!email || !email.includes("@"))
+      nextErrors.email = "Enter a valid email address."
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors)
+      return
+    }
+
+    setLoading(true)
+    try {
+      const { error } = await supabase.from("participants").insert({
+        full_name: fullName,
+        email: email,
+      })
+
+      if (error) {
+        if (
+          error.code === "23505" ||
+          error.message?.toLowerCase().includes("unique") ||
+          error.message?.toLowerCase().includes("duplicate")
+        ) {
+          setErrors({ email: "This email is already registered." })
+        } else {
+          setErrors({
+            general: error.message || "Registration failed. Please try again.",
+          })
+        }
+      } else {
+        setSubmitted(true)
+        if (onRegistered) onRegistered()
+      }
+    } catch {
+      setErrors({ general: "Network error. Please try again." })
+    } finally {
+      setLoading(false)
+    }
   }
+
   return (
     <main className="page-shell">
       <div className="mx-auto max-w-6xl px-5 py-16 lg:px-8">
@@ -565,23 +628,26 @@ function Registration({
                 <span className="text-gold">awaits.</span>
               </h1>
               <p className="mt-5 text-white/55">
-                One form. One team. One shot at the top.
+                Individual registration. Equal syndicate distribution by the
+                trading desk.
               </p>
             </div>
             <div className="relative z-10 mt-16 hidden lg:block">
-              {["Free entry", "Teams of 3–5", "Starting capital included"].map(
-                (item) => (
-                  <div
-                    className="mb-3 flex items-center gap-3 text-sm text-white/65"
-                    key={item}
-                  >
-                    <span className="flex size-6 items-center justify-center rounded-full bg-gold/15 text-gold">
-                      <Check size={13} />
-                    </span>
-                    {item}
-                  </div>
-                ),
-              )}
+              {[
+                "Free entry",
+                "Balanced trading syndicates",
+                "Starting capital included ($100k)",
+              ].map((item) => (
+                <div
+                  className="mb-3 flex items-center gap-3 text-sm text-white/65"
+                  key={item}
+                >
+                  <span className="flex size-6 items-center justify-center rounded-full bg-gold/15 text-gold">
+                    <Check size={13} />
+                  </span>
+                  {item}
+                </div>
+              ))}
             </div>
           </div>
           <div className="p-6 sm:p-10 lg:p-12">
@@ -600,12 +666,20 @@ function Registration({
                   <h2 className="mt-2 font-display text-3xl text-white">
                     Open your account
                   </h2>
+
+                  {errors.general && (
+                    <div className="mt-4 rounded-xl border border-loss/25 bg-loss/10 p-3.5 text-sm text-loss">
+                      {errors.general}
+                    </div>
+                  )}
+
                   <div className="mt-8 space-y-5">
                     <Field
                       label="Full name"
                       name="fullName"
                       placeholder="Jordan Belfort"
                       error={errors.fullName}
+                      disabled={loading}
                     />
                     <Field
                       label="Email address"
@@ -613,37 +687,20 @@ function Registration({
                       type="email"
                       placeholder="jordan@stratton.com"
                       error={errors.email}
+                      disabled={loading}
                     />
-                    <label className="field-label">
-                      Team name
-                      <select
-                        name="team"
-                        className="field-control"
-                        defaultValue=""
-                      >
-                        <option value="" disabled>
-                          Join an existing team
-                        </option>
-                        {teams.map((team) => (
-                          <option value={team.id} key={team.id}>
-                            {team.name}
-                          </option>
-                        ))}
-                        <option value="new">+ Create a new team</option>
-                      </select>
-                      {errors.team && (
-                        <span className="field-error">{errors.team}</span>
-                      )}
-                    </label>
                   </div>
                   <Button
                     type="submit"
+                    disabled={loading}
                     className="mt-8 w-full justify-center py-3.5"
                   >
-                    Enter the market <ArrowRight size={17} />
+                    {loading ? "Registering..." : "Enter the market"}{" "}
+                    <ArrowRight size={17} />
                   </Button>
                   <p className="mt-4 text-center text-xs text-white/30">
                     By registering, you agree to play boldly and trade fairly.
+                    Teams are assigned by the trading desk.
                   </p>
                 </motion.form>
               ) : (
@@ -662,7 +719,7 @@ function Registration({
                   </h2>
                   <p className="mt-3 max-w-sm text-white/50">
                     Registration confirmed. Watch your inbox for the market
-                    briefing.
+                    briefing and syndicate assignment.
                   </p>
                   <Button
                     onClick={() => navigate("leaderboard")}
@@ -686,12 +743,14 @@ function Field({
   placeholder,
   type = "text",
   error,
+  disabled = false,
 }: {
   label: string
   name: string
   placeholder: string
   type?: string
   error?: string
+  disabled?: boolean
 }) {
   return (
     <label className="field-label">
@@ -701,6 +760,7 @@ function Field({
         name={name}
         type={type}
         placeholder={placeholder}
+        disabled={disabled}
         aria-invalid={Boolean(error)}
       />
       {error && <span className="field-error">{error}</span>}
@@ -761,7 +821,8 @@ function Leaderboard({
             Leaderboard Currently Inaccessible
           </h1>
           <p className="mt-4 text-sm leading-relaxed text-white/55">
-            The ranking board is hidden until team registration are completed.
+            The ranking board is hidden until team registrations and syndicate
+            assignments are completed.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <Button onClick={() => navigate("home")} variant="secondary">
@@ -813,7 +874,7 @@ function Leaderboard({
               <h2 className="font-display text-xl text-white">
                 Market positions
               </h2>
-              <p className="text-xs text-white/35">Updated just now</p>
+              <p className="text-xs text-white/35">Updated in realtime</p>
             </div>
             <label className="search-box">
               <Search size={16} />
@@ -835,14 +896,9 @@ function Leaderboard({
                 <span className="text-right">Changes</span>
               </div>
               <motion.div layout>
-                {filtered.map((team) => {
-                  const currentRankIndex = teams.findIndex(
-                    (t) => t.id === team.id,
-                  )
-                  const currentRank =
-                    currentRankIndex !== -1 ? currentRankIndex + 1 : 1
+                {filtered.map((team, idx) => {
+                  const currentRank = idx + 1
                   const initialRank = team.initialRank ?? currentRank
-
                   const lastAction = getLastAction(
                     team.id,
                     events,
@@ -875,7 +931,7 @@ function Leaderboard({
                             {team.name}
                           </p>
                           <p className="text-xs text-white/30 truncate">
-                            {team.ticker} · {team.members} partners
+                            {team.ticker} · {team.members ?? 0} partners
                           </p>
                         </div>
                       </div>
@@ -918,7 +974,7 @@ function Leaderboard({
           </div>
         </div>
       </section>
-      <Ticker events={events} />
+      <Ticker events={events} teams={teams} />
     </main>
   )
 }
@@ -928,20 +984,38 @@ function TeamPage({
   participants,
   events,
 }: {
-  team: Team
+  team: Team | null
   participants: Participant[]
   events: ScoreEvent[]
 }) {
+  if (!team) {
+    return (
+      <main className="page-shell flex items-center justify-center px-5 py-20">
+        <p className="text-white/50">Select a team from the leaderboard.</p>
+      </main>
+    )
+  }
+
   const teamEvents = events.filter((event) => event.team_id === team.id)
-  const max = Math.max(...team.history)
-  const min = Math.min(...team.history)
-  const chartPath = team.history
+  const history = team.history && team.history.length > 1 ? team.history : [100, 100]
+  const max = Math.max(...history, 101)
+  const min = Math.min(...history, 99)
+  const chartPath = history
     .map((value, index) => {
-      const x = (index / (team.history.length - 1)) * 720
-      const y = 190 - ((value - min) / (max - min)) * 140
+      const x = (index / Math.max(1, history.length - 1)) * 720
+      const range = max - min || 1
+      const y = 190 - ((value - min) / range) * 140
       return `${index === 0 ? "M" : "L"} ${x} ${y}`
     })
     .join(" ")
+
+  const bonuses = teamEvents
+    .filter((e) => e.type === "bonus")
+    .reduce((sum, e) => sum + Number(e.amount), 0)
+  const penalties = teamEvents
+    .filter((e) => e.type === "penalty")
+    .reduce((sum, e) => sum + Number(e.amount), 0)
+
   return (
     <main className="page-shell">
       <div className="mx-auto max-w-7xl px-5 py-14 lg:px-8">
@@ -969,8 +1043,13 @@ function TeamPage({
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-white/40">Portfolio performance</p>
-                <p className="mt-1 text-sm text-gain">
-                  ▲ {team.change}% tonight
+                <p
+                  className={`mt-1 text-sm ${
+                    (team.change ?? 0) >= 0 ? "text-gain" : "text-loss"
+                  }`}
+                >
+                  {(team.change ?? 0) >= 0 ? "▲" : "▼"}{" "}
+                  {Math.abs(team.change ?? 0)}% tonight
                 </p>
               </div>
               <span className="rounded-full bg-gain/10 px-3 py-1 text-xs text-gain">
@@ -1014,8 +1093,8 @@ function TeamPage({
                 label="Starting capital"
                 value={formatMoney(team.starting_capital)}
               />
-              <Metric label="Bonuses" value="+$24,850" green />
-              <Metric label="Penalties" value="−$1,100" />
+              <Metric label="Bonuses" value={`+${formatMoney(bonuses)}`} green />
+              <Metric label="Penalties" value={`−${formatMoney(penalties)}`} />
             </div>
           </div>
           <div className="glass-card p-6">
@@ -1041,6 +1120,11 @@ function TeamPage({
                     </div>
                   </div>
                 ))}
+              {participants.filter((m) => m.team_id === team.id).length === 0 && (
+                <p className="text-xs text-white/40">
+                  No partners assigned yet.
+                </p>
+              )}
             </div>
           </div>
           <div className="glass-card p-6 lg:col-span-2">
@@ -1091,6 +1175,11 @@ function TeamPage({
                   </span>
                 </div>
               ))}
+              {teamEvents.length === 0 && (
+                <p className="py-4 text-xs text-white/40">
+                  No transactions recorded for this team.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1130,116 +1219,142 @@ function Admin({
   games,
   participants,
   isLeaderboardAccessible,
-  setIsLeaderboardAccessible,
-  setTeams,
-  setEvents,
-  setGames,
-  setParticipants,
+  refetchData,
 }: {
   teams: Team[]
   events: ScoreEvent[]
   games: Game[]
   participants: Participant[]
   isLeaderboardAccessible: boolean
-  setIsLeaderboardAccessible: (acc: boolean) => void
-  setTeams: React.Dispatch<React.SetStateAction<Team[]>>
-  setEvents: React.Dispatch<React.SetStateAction<ScoreEvent[]>>
-  setGames: React.Dispatch<React.SetStateAction<Game[]>>
-  setParticipants: React.Dispatch<React.SetStateAction<Participant[]>>
+  refetchData: () => Promise<void>
 }) {
-  const [authed, setAuthed] = useState(false)
+  const [authed, setAuthed] = useState<boolean | null>(null)
   const [tab, setTab] = useState<AdminTab>("overview")
-  const [freeze, setFreeze] = useState(false)
   const [notice, setNotice] = useState("")
-  if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />
+  const [loadingAction, setLoadingAction] = useState(false)
 
-  const createRandomTeams = () => {
-    const presetTeams = [
-      { name: "Apex Capital", ticker: "APEX" },
-      { name: "Blue Chip Syndicate", ticker: "BLUE" },
-      { name: "Bull & Bear Co.", ticker: "BBCO" },
-      { name: "Cash Flow Kings", ticker: "CFKG" },
-      { name: "Golden Wolves", ticker: "GWLF" },
-      { name: "Margin Callers", ticker: "MRGN" },
-      { name: "The Rainmakers", ticker: "RAIN" },
-      { name: "Venture Vultures", ticker: "VVCO" },
-    ]
-
-    // Sort team presets strictly alphabetically
-    const sortedPresets = [...presetTeams].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )
-
-    // Fisher-Yates shuffle participants randomly
-    const shuffled = [...participants]
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-    }
-
-    const numTeams = sortedPresets.length
-    const newParticipants: Participant[] = []
-    const newTeams: Team[] = []
-
-    const perTeam = Math.floor(shuffled.length / numTeams)
-    const remainder = shuffled.length % numTeams
-
-    let pIdx = 0
-    sortedPresets.forEach((preset, index) => {
-      const teamId = String(index + 1)
-      const count = perTeam + (index < remainder ? 1 : 0)
-
-      for (let c = 0; c < count; c++) {
-        if (pIdx < shuffled.length) {
-          newParticipants.push({
-            ...shuffled[pIdx],
-            team_id: teamId,
-          })
-          pIdx++
-        }
+  // Verify auth session and admin status
+  useEffect(() => {
+    async function checkAuth() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.user) {
+        setAuthed(false)
+        return
       }
+      const { data, error } = await supabase
+        .from("admins")
+        .select("user_id")
+        .eq("user_id", session.user.id)
+        .maybeSingle()
 
-      newTeams.push({
-        id: teamId,
-        name: preset.name,
-        ticker: preset.ticker,
-        starting_capital: 100000,
-        created_at: new Date().toISOString(),
-        members: count,
-        netWorth: 100000,
-        change: 0,
-        history: [100, 100],
-        initialRank: index + 1, // Stacked 1..N in alphabetical order
-        lastAction: "Registered",
-      })
-    })
+      if (!error && data) {
+        setAuthed(true)
+      } else {
+        setAuthed(false)
+      }
+    }
+    checkAuth()
+  }, [])
 
-    setTeams(newTeams)
-    setParticipants(newParticipants)
-    setEvents([])
-    setIsLeaderboardAccessible(true)
-    setNotice(
-      "🎲 Created equal teams randomly & initialized in alphabetical order! Leaderboard is now accessible.",
+  if (authed === null) {
+    return (
+      <main className="page-shell flex items-center justify-center px-5 py-20">
+        <p className="text-white/40">Verifying executive clearance...</p>
+      </main>
     )
   }
 
-  const addScore = (event: FormEvent<HTMLFormElement>) => {
+  if (!authed) {
+    return <AdminLogin onLogin={() => setAuthed(true)} />
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    setAuthed(false)
+  }
+
+  const createEqualTeams = async () => {
+    setLoadingAction(true)
+    try {
+      const { error } = await supabase.rpc("create_equal_teams")
+      if (error) {
+        setNotice(`⚠️ Error creating equal teams: ${error.message}`)
+      } else {
+        await refetchData()
+        setNotice(
+          "🎲 Equal teams distributed randomly across alphabetical teams! Scores reset & leaderboard opened.",
+        )
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setNotice(`⚠️ Action failed: ${msg}`)
+    } finally {
+      setLoadingAction(false)
+    }
+  }
+
+  const toggleLeaderboardAccess = async () => {
+    const next = !isLeaderboardAccessible
+    const { error } = await supabase
+      .from("settings")
+      .update({
+        is_leaderboard_accessible: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1)
+
+    if (error) {
+      setNotice(`⚠️ Failed to update board access: ${error.message}`)
+    } else {
+      await refetchData()
+      setNotice(
+        next
+          ? "🔓 Live leaderboard is now accessible to all participants."
+          : "🔒 Live leaderboard is now locked.",
+      )
+    }
+  }
+
+  const addScore = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const teamId = String(form.get("team"))
+    const gameId = String(form.get("game")) || null
     const amount = Number(form.get("amount"))
     const type = String(form.get("type")) as ScoreEvent["type"]
-    const score: ScoreEvent = {
-      id: crypto.randomUUID(),
+
+    const { error } = await supabase.from("score_events").insert({
       team_id: teamId,
-      game_id: String(form.get("game")) || null,
+      game_id: gameId,
       type,
       amount,
-      created_at: new Date().toISOString(),
+    })
+
+    if (error) {
+      setNotice(`⚠️ Failed to post score: ${error.message}`)
+    } else {
+      setNotice("Score posted to the live market.")
+      event.currentTarget.reset()
+      await refetchData()
     }
-    setEvents((current) => [score, ...current])
-    setNotice("Score posted to the live market.")
-    event.currentTarget.reset()
+  }
+
+  const undoLastScore = async () => {
+    if (!events.length) return
+    const latest = events[0]
+    const { error } = await supabase
+      .from("score_events")
+      .delete()
+      .eq("id", latest.id)
+
+    if (error) {
+      setNotice(`⚠️ Failed to undo transaction: ${error.message}`)
+    } else {
+      setNotice("Latest transaction undone.")
+      await refetchData()
+    }
   }
 
   return (
@@ -1250,15 +1365,21 @@ function Admin({
             Control room
           </p>
           <AdminNav tab={tab} setTab={setTab} />
-          <div className="mt-8 border-t border-white/7 pt-6">
+          <div className="mt-8 border-t border-white/7 pt-6 space-y-4">
             <div className="rounded-xl border border-gold/15 bg-gold/5 p-4">
               <p className="flex items-center gap-2 text-xs text-gold">
                 <ShieldCheck size={14} /> Admin session
               </p>
               <p className="mt-2 text-xs text-white/35">
-                Realtime controls are active.
+                Realtime controls and database connected.
               </p>
             </div>
+            <button
+              onClick={handleSignOut}
+              className="flex w-full items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs text-white/60 hover:bg-white/5 hover:text-white transition"
+            >
+              <LogOut size={14} /> Sign out
+            </button>
           </div>
         </aside>
         <div className="min-w-0 flex-1 p-5 sm:p-8">
@@ -1275,9 +1396,7 @@ function Admin({
                   <span>Board Access:</span>
                   <button
                     type="button"
-                    onClick={() =>
-                      setIsLeaderboardAccessible(!isLeaderboardAccessible)
-                    }
+                    onClick={toggleLeaderboardAccess}
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                       isLeaderboardAccessible
                         ? "border border-gain/30 bg-gain/15 text-gain"
@@ -1295,16 +1414,15 @@ function Admin({
                     )}
                   </button>
                 </div>
-                <Button onClick={createRandomTeams}>
-                  <Sparkles size={14} /> Create Equal Teams
+                <Button onClick={createEqualTeams} disabled={loadingAction}>
+                  <Sparkles size={14} />
+                  {loadingAction ? "Distributing..." : "Create Equal Teams"}
                 </Button>
                 <button
-                  aria-label="Freeze leaderboard"
-                  aria-pressed={freeze}
-                  onClick={() => setFreeze(!freeze)}
-                  className={`toggle ${freeze ? "toggle-on" : ""}`}
+                  onClick={handleSignOut}
+                  className="lg:hidden inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60 hover:text-white"
                 >
-                  <span />
+                  <LogOut size={14} /> Sign out
                 </button>
               </div>
             </div>
@@ -1328,18 +1446,23 @@ function Admin({
               <AdminOverview
                 teams={teams}
                 events={events}
+                games={games}
                 participants={participants}
               />
             )}
             {tab === "teams" && (
               <TeamsPanel
                 teams={teams}
-                setTeams={setTeams}
-                createRandomTeams={createRandomTeams}
+                createRandomTeams={createEqualTeams}
+                refetchData={refetchData}
               />
             )}
             {tab === "members" && (
-              <MembersPanel teams={teams} participants={participants} />
+              <MembersPanel
+                teams={teams}
+                participants={participants}
+                refetchData={refetchData}
+              />
             )}
             {tab === "scoring" && (
               <ScoringPanel
@@ -1347,11 +1470,11 @@ function Admin({
                 games={games}
                 events={events}
                 onSubmit={addScore}
-                undo={() => setEvents((current) => current.slice(1))}
+                undo={undoLastScore}
               />
             )}
             {tab === "games" && (
-              <GamesPanel games={games} setGames={setGames} />
+              <GamesPanel games={games} refetchData={refetchData} />
             )}
             {tab === "activity" && (
               <ActivityPanel events={events} teams={teams} />
@@ -1364,13 +1487,62 @@ function Admin({
 }
 
 function AdminLogin({ onLogin }: { onLogin: () => void }) {
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError("")
+    setLoading(true)
+    const form = new FormData(event.currentTarget)
+    const email = String(form.get("email") || "").trim()
+    const password = String(form.get("password") || "")
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+
+      if (authError) {
+        setError(authError.message || "Invalid credentials.")
+        setLoading(false)
+        return
+      }
+
+      if (!authData.user) {
+        setError("Sign in failed. No user returned.")
+        setLoading(false)
+        return
+      }
+
+      // Verify user is in admins table
+      const { data: adminData, error: adminError } = await supabase
+        .from("admins")
+        .select("user_id")
+        .eq("user_id", authData.user.id)
+        .maybeSingle()
+
+      if (adminError || !adminData) {
+        await supabase.auth.signOut()
+        setError("Access denied: You do not have administrator privileges.")
+        setLoading(false)
+        return
+      }
+
+      onLogin()
+    } catch {
+      setError("An unexpected error occurred during sign in.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <main className="page-shell flex items-center justify-center px-5 py-16">
       <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          onLogin()
-        }}
+        onSubmit={handleSubmit}
         className="w-full max-w-md rounded-2xl border border-gold/15 bg-panel p-8 shadow-2xl"
       >
         <div className="icon-box mx-auto">
@@ -1380,28 +1552,39 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
           Executive access
         </h1>
         <p className="mt-2 text-center text-sm text-white/40">
-          Sign in to manage tonight's market.
+          Sign in with Supabase admin credentials.
         </p>
+
+        {error && (
+          <div className="mt-4 rounded-xl border border-loss/25 bg-loss/10 p-3 text-sm text-loss text-center">
+            {error}
+          </div>
+        )}
+
         <div className="mt-7 space-y-4">
           <Field
             label="Admin email"
             name="email"
             type="email"
             placeholder="admin@ebec.org"
+            disabled={loading}
           />
           <Field
             label="Password"
             name="password"
             type="password"
             placeholder="••••••••"
+            disabled={loading}
           />
         </div>
-        <Button type="submit" className="mt-7 w-full justify-center py-3.5">
-          Enter control room <ArrowRight size={16} />
+        <Button
+          type="submit"
+          disabled={loading}
+          className="mt-7 w-full justify-center py-3.5"
+        >
+          {loading ? "Authenticating..." : "Enter control room"}{" "}
+          <ArrowRight size={16} />
         </Button>
-        <p className="mt-4 text-center text-[11px] text-white/25">
-          Preview mode · any credentials accepted
-        </p>
       </form>
     </main>
   )
@@ -1446,24 +1629,27 @@ function AdminNav({
 function AdminOverview({
   teams,
   events,
+  games,
   participants,
 }: {
   teams: Team[]
   events: ScoreEvent[]
+  games: Game[]
   participants: Participant[]
 }) {
+  const gamesPlayed = games.filter((g) => g.status === "done").length
+  const totalBonuses = events
+    .filter((item) => item.type === "bonus")
+    .reduce((sum, item) => sum + Number(item.amount), 0)
+
   const kpis = [
-    [BriefcaseBusiness, "Teams", teams.length, "+2 tonight"],
+    [BriefcaseBusiness, "Teams", teams.length, "Active syndicates"],
     [Users, "Participants", participants.length, "Registered"],
-    [Gamepad2, "Games played", 3, `of ${mockGames.length} total`],
+    [Gamepad2, "Games played", gamesPlayed, `of ${games.length} total`],
     [
       CircleDollarSign,
       "Bonuses awarded",
-      formatMoney(
-        events
-          .filter((item) => item.type === "bonus")
-          .reduce((sum, item) => sum + item.amount, 0),
-      ),
+      formatMoney(totalBonuses),
       "Across all games",
     ],
   ]
@@ -1509,6 +1695,9 @@ function AdminOverview({
                 </span>
               </div>
             ))}
+            {teams.length === 0 && (
+              <p className="py-4 text-xs text-white/30">No teams found.</p>
+            )}
           </div>
         </div>
         <div className="admin-card">
@@ -1536,6 +1725,9 @@ function AdminOverview({
                 </div>
               </div>
             ))}
+            {events.length === 0 && (
+              <p className="text-xs text-white/30">No activity yet.</p>
+            )}
           </div>
         </div>
       </div>
@@ -1545,28 +1737,62 @@ function AdminOverview({
 
 function TeamsPanel({
   teams,
-  setTeams,
   createRandomTeams,
+  refetchData,
 }: {
   teams: Team[]
-  setTeams: React.Dispatch<React.SetStateAction<Team[]>>
   createRandomTeams: () => void
+  refetchData: () => Promise<void>
 }) {
   const [query, setQuery] = useState("")
+  const [isAdding, setIsAdding] = useState(false)
+
+  const handleAddTeam = async () => {
+    const name = prompt("Enter new team name:")
+    if (!name?.trim()) return
+    const ticker =
+      prompt("Enter team ticker (3-4 chars):")?.toUpperCase().trim() ||
+      name.slice(0, 4).toUpperCase()
+
+    const { error } = await supabase.from("teams").insert({
+      name: name.trim(),
+      ticker: ticker,
+      starting_capital: 100000,
+    })
+    if (error) {
+      alert(`Error creating team: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
+  const handleRemoveTeam = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete team "${name}"?`)) return
+    const { error } = await supabase.from("teams").delete().eq("id", id)
+    if (error) {
+      alert(`Error removing team: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-gold/25 bg-gold/5 p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h3 className="flex items-center gap-2 font-display text-xl text-gold">
-              <Sparkles size={20} /> Random Team Equalization & Initialization
+              <Sparkles size={20} /> Random Syndicate Equalization
             </h3>
             <p className="mt-2 max-w-2xl text-xs leading-relaxed text-white/60">
-              Shuffles all registered participants randomly and assigns them into equal-sized teams. Teams are stacked in <strong>alphabetical order</strong> with initial rank, starting capital ($100,000), "Registered" action, and zero rank changes.
+              Shuffles all registered participants randomly and assigns them
+              into equal-sized teams. Teams are stacked in{" "}
+              <strong>alphabetical order</strong>, score events are reset, and
+              the leaderboard is unlocked.
             </p>
           </div>
           <Button onClick={createRandomTeams}>
-            <Sparkles size={15} /> Create Equal Teams Randomly & Open Board
+            <Sparkles size={15} /> Create Equal Teams & Open Board
           </Button>
         </div>
       </div>
@@ -1580,26 +1806,7 @@ function TeamsPanel({
               placeholder="Search firms"
             />
           </label>
-          <Button
-            onClick={() =>
-              setTeams((current) => [
-                ...current,
-                {
-                  id: crypto.randomUUID(),
-                  name: "New Venture",
-                  ticker: "NVCO",
-                  starting_capital: 100000,
-                  created_at: new Date().toISOString(),
-                  members: 0,
-                  netWorth: 100000,
-                  change: 0,
-                  history: [100, 100],
-                  initialRank: current.length + 1,
-                  lastAction: "Registered",
-                },
-              ])
-            }
-          >
+          <Button onClick={handleAddTeam} disabled={isAdding}>
             <Plus size={15} /> New team
           </Button>
         </div>
@@ -1625,16 +1832,17 @@ function TeamsPanel({
                 </div>
                 <Button
                   variant="danger"
-                  onClick={() =>
-                    setTeams((current) =>
-                      current.filter((item) => item.id !== team.id),
-                    )
-                  }
+                  onClick={() => handleRemoveTeam(team.id, team.name)}
                 >
                   Remove
                 </Button>
               </div>
             ))}
+          {teams.length === 0 && (
+            <p className="py-6 text-center text-sm text-white/30">
+              No teams available.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -1644,53 +1852,140 @@ function TeamsPanel({
 function MembersPanel({
   teams,
   participants,
+  refetchData,
 }: {
   teams: Team[]
   participants: Participant[]
+  refetchData: () => Promise<void>
 }) {
+  const handleRemoveMember = async (id: string, name: string) => {
+    if (!confirm(`Remove ${name} from this syndicate?`)) return
+    const { error } = await supabase
+      .from("participants")
+      .update({ team_id: null })
+      .eq("id", id)
+
+    if (error) {
+      alert(`Error updating participant: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
+  const handleAddParticipant = async (teamId: string) => {
+    const name = prompt("Enter participant full name:")
+    if (!name?.trim()) return
+    const email = prompt("Enter participant email:")
+    if (!email?.trim()) return
+
+    const { error } = await supabase.from("participants").insert({
+      full_name: name.trim(),
+      email: email.trim().toLowerCase(),
+      team_id: teamId,
+    })
+
+    if (error) {
+      alert(`Error adding participant: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
+  const unassigned = participants.filter((p) => !p.team_id)
+
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {teams.slice(0, 6).map((team) => (
-        <div className="admin-card" key={team.id}>
+    <div className="space-y-6">
+      {unassigned.length > 0 && (
+        <div className="admin-card border border-gold/20">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-medium text-white">{team.name}</h2>
-              <p className="text-xs text-white/30">{team.ticker}</p>
-            </div>
-            <button className="icon-button" aria-label="Add member">
-              <Plus size={15} />
-            </button>
+            <h2 className="text-sm font-medium text-gold flex items-center gap-2">
+              <Users size={16} /> Unassigned Participants ({unassigned.length})
+            </h2>
+            <span className="text-xs text-white/40">
+              Will be allocated when Equal Teams is run
+            </span>
           </div>
-          <div className="mt-4 space-y-3">
-            {participants
-              .filter((p) => p.team_id === team.id)
-              .map((member) => (
-                <div
-                  className="flex items-center justify-between"
-                  key={member.id}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="member-avatar size-8 text-[10px]">
-                      {member.full_name.charAt(0)}
-                    </div>
-                    <span className="text-sm text-white/65">
-                      {member.full_name}
-                    </span>
-                  </div>
-                  <button
-                    className="text-white/25 hover:text-loss"
-                    aria-label={`Remove ${member.full_name}`}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            <button className="flex items-center gap-2 text-xs text-gold">
-              <Plus size={13} /> Add participant
-            </button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {unassigned.map((member) => (
+              <span
+                key={member.id}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
+              >
+                {member.full_name}
+                {member.email && (
+                  <span className="text-white/30 text-[10px]">
+                    ({member.email})
+                  </span>
+                )}
+              </span>
+            ))}
           </div>
         </div>
-      ))}
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {teams.map((team) => (
+          <div className="admin-card" key={team.id}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-medium text-white">{team.name}</h2>
+                <p className="text-xs text-white/30">{team.ticker}</p>
+              </div>
+              <button
+                className="icon-button"
+                aria-label="Add member"
+                onClick={() => handleAddParticipant(team.id)}
+              >
+                <Plus size={15} />
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {participants
+                .filter((p) => p.team_id === team.id)
+                .map((member) => (
+                  <div
+                    className="flex items-center justify-between"
+                    key={member.id}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="member-avatar size-8 text-[10px]">
+                        {member.full_name.charAt(0)}
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm text-white/65">
+                          {member.full_name}
+                        </span>
+                        {member.email && (
+                          <span className="text-[10px] text-white/30">
+                            {member.email}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      className="text-white/25 hover:text-loss transition"
+                      aria-label={`Remove ${member.full_name}`}
+                      onClick={() =>
+                        handleRemoveMember(member.id, member.full_name)
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              {participants.filter((p) => p.team_id === team.id).length === 0 && (
+                <p className="text-xs text-white/30">No members in this syndicate.</p>
+              )}
+              <button
+                onClick={() => handleAddParticipant(team.id)}
+                className="flex items-center gap-2 text-xs text-gold hover:underline"
+              >
+                <Plus size={13} /> Add participant
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1715,7 +2010,7 @@ function ScoringPanel({
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="field-label">
             Team
-            <select className="field-control" name="team">
+            <select className="field-control" name="team" required>
               {teams.map((t) => (
                 <option value={t.id} key={t.id}>
                   {t.name}
@@ -1731,11 +2026,11 @@ function ScoringPanel({
                   {g.name}
                 </option>
               ))}
-              <option value="">Bonus round</option>
+              <option value="">Bonus round / Other</option>
             </select>
           </label>
           <label className="field-label">
-            Amount
+            Amount ($)
             <input
               className="field-control"
               name="amount"
@@ -1747,7 +2042,7 @@ function ScoringPanel({
           </label>
           <label className="field-label">
             Type
-            <select className="field-control" name="type">
+            <select className="field-control" name="type" required>
               <option value="bonus">Bonus</option>
               <option value="penalty">Penalty</option>
             </select>
@@ -1759,24 +2054,32 @@ function ScoringPanel({
       </form>
       <div className="admin-card">
         <h2 className="font-display text-xl text-white">Last action</h2>
-        {events[0] && (
+        {events[0] ? (
           <div className="mt-5 rounded-xl border border-white/7 bg-white/2 p-4">
             <p className="text-sm text-white">
               {events[0].type === "penalty"
                 ? "Penalty applied"
                 : "Win bonus awarded"}
             </p>
-            <p className="mt-2 font-mono text-xl text-gain">
-              +{formatMoney(events[0].amount)}
+            <p
+              className={`mt-2 font-mono text-xl ${
+                events[0].type === "penalty" ? "text-loss" : "text-gain"
+              }`}
+            >
+              {events[0].type === "penalty" ? "−" : "+"}
+              {formatMoney(events[0].amount)}
             </p>
             <p className="mt-1 text-xs text-white/25">
               {new Date(events[0].created_at).toLocaleTimeString()}
             </p>
           </div>
+        ) : (
+          <p className="mt-5 text-xs text-white/30">No transactions yet.</p>
         )}
         <Button
           variant="secondary"
           onClick={undo}
+          disabled={!events.length}
           className="mt-4 w-full justify-center"
         >
           Undo last action
@@ -1788,11 +2091,24 @@ function ScoringPanel({
 
 function GamesPanel({
   games,
-  setGames,
+  refetchData,
 }: {
   games: Game[]
-  setGames: React.Dispatch<React.SetStateAction<Game[]>>
+  refetchData: () => Promise<void>
 }) {
+  const updateStatus = async (gameId: string, status: Game["status"]) => {
+    const { error } = await supabase
+      .from("games")
+      .update({ status })
+      .eq("id", gameId)
+
+    if (error) {
+      alert(`Error updating game: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {games.map((game) => (
@@ -1804,13 +2120,7 @@ function GamesPanel({
             <select
               value={game.status}
               onChange={(e) =>
-                setGames((current) =>
-                  current.map((item) =>
-                    item.id === game.id
-                      ? { ...item, status: e.target.value as Game["status"] }
-                      : item,
-                  ),
-                )
+                updateStatus(game.id, e.target.value as Game["status"])
               }
               className="status-select"
             >
@@ -1841,7 +2151,7 @@ function ActivityPanel({
       "team,type,amount,time",
       ...events.map(
         (e) =>
-          `${teams.find((t) => t.id === e.team_id)?.name},${e.type},${e.amount},${e.created_at}`,
+          `"${teams.find((t) => t.id === e.team_id)?.name || "Unknown"}",${e.type},${e.amount},${e.created_at}`,
       ),
     ].join("\n")
     const link = document.createElement("a")
@@ -1849,6 +2159,7 @@ function ActivityPanel({
     link.download = "wall-street-night-activity.csv"
     link.click()
   }
+
   return (
     <div className="admin-card">
       <div className="mb-5 flex items-center justify-between">
@@ -1856,7 +2167,11 @@ function ActivityPanel({
           <h2 className="font-display text-xl text-white">Audit trail</h2>
           <p className="text-xs text-white/30">All score events</p>
         </div>
-        <Button variant="secondary" onClick={exportCsv}>
+        <Button
+          variant="secondary"
+          onClick={exportCsv}
+          disabled={!events.length}
+        >
           <Download size={15} /> Export CSV
         </Button>
       </div>
@@ -1880,7 +2195,7 @@ function ActivityPanel({
                   })}
                 </td>
                 <td className="text-white">
-                  {teams.find((t) => t.id === event.team_id)?.name}
+                  {teams.find((t) => t.id === event.team_id)?.name || "Unknown Firm"}
                 </td>
                 <td>
                   <span className="rounded-full bg-white/5 px-2 py-1 text-xs capitalize text-white/50">
@@ -1897,6 +2212,13 @@ function ActivityPanel({
                 </td>
               </tr>
             ))}
+            {events.length === 0 && (
+              <tr>
+                <td colSpan={4} className="py-8 text-center text-xs text-white/30">
+                  No score events recorded yet.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -1941,38 +2263,128 @@ function Footer({ navigate }: { navigate: (page: Page) => void }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromPath)
-  const [teams, setTeams] = useState<Team[]>(mockTeams)
-  const [events, setEvents] = useState<ScoreEvent[]>(mockEvents)
-  const [games, setGames] = useState<Game[]>(mockGames)
-  const [participants, setParticipants] =
-    useState<Participant[]>(mockParticipants)
-  const [selectedTeam, setSelectedTeam] = useState<Team>(mockTeams[0])
+  const [rawTeams, setRawTeams] = useState<Team[]>([])
+  const [events, setEvents] = useState<ScoreEvent[]>([])
+  const [games, setGames] = useState<Game[]>([])
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [isLeaderboardAccessible, setIsLeaderboardAccessible] =
     useState<boolean>(false)
+  const [loadingInitial, setLoadingInitial] = useState(true)
 
+  // Navigation sync with browser history
   useEffect(() => {
     const onPop = () => setPage(pageFromPath())
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
   }, [])
 
+  // Fetch all Supabase data
+  const fetchData = async () => {
+    try {
+      const [
+        teamsRes,
+        eventsRes,
+        gamesRes,
+        participantsRes,
+        settingsRes,
+      ] = await Promise.all([
+        supabase.from("teams").select("*").order("name"),
+        supabase
+          .from("score_events")
+          .select("*")
+          .order("created_at", { ascending: false }),
+        supabase.from("games").select("*").order("created_at"),
+        supabase.from("participants").select("*"),
+        supabase
+          .from("settings")
+          .select("is_leaderboard_accessible")
+          .eq("id", 1)
+          .maybeSingle(),
+      ])
+
+      if (teamsRes.data) setRawTeams(teamsRes.data)
+      if (eventsRes.data) setEvents(eventsRes.data)
+      if (gamesRes.data) setGames(gamesRes.data)
+
+      if (participantsRes.data) {
+        setParticipants(participantsRes.data)
+      } else if (participantsRes.error) {
+        // If RLS restricted emails for anon, fallback to public view
+        const { data: pubPart } = await supabase
+          .from("public_participants")
+          .select("*")
+        if (pubPart) setParticipants(pubPart)
+      }
+
+      if (settingsRes.data) {
+        setIsLeaderboardAccessible(
+          Boolean(settingsRes.data.is_leaderboard_accessible),
+        )
+      }
+    } catch (err) {
+      console.error("Error loading Supabase data:", err)
+    } finally {
+      setLoadingInitial(false)
+    }
+  }
+
+  // Initial load
   useEffect(() => {
-    if (page !== "leaderboard" || !isLeaderboardAccessible) return
-    const timer = window.setInterval(() => {
-      setTeams((current) =>
-        current.map((team, index) =>
-          index === 2
-            ? {
-                ...team,
-                netWorth: team.netWorth + 100,
-                history: [...team.history.slice(-6), team.netWorth + 100],
-              }
-            : team,
-        ),
+    fetchData()
+  }, [])
+
+  // Realtime subscription on score_events, teams, participants, games, settings
+  useEffect(() => {
+    const channel = supabase
+      .channel("schema-db-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "score_events" },
+        () => {
+          fetchData()
+        },
       )
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [page, isLeaderboardAccessible])
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teams" },
+        () => {
+          fetchData()
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "participants" },
+        () => {
+          fetchData()
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "games" },
+        () => {
+          fetchData()
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "settings" },
+        (payload) => {
+          if (payload.new && "is_leaderboard_accessible" in payload.new) {
+            setIsLeaderboardAccessible(
+              Boolean(payload.new.is_leaderboard_accessible),
+            )
+          } else {
+            fetchData()
+          }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
 
   const navigate = (next: Page) => {
     window.history.pushState({}, "", paths[next])
@@ -1985,21 +2397,72 @@ export default function App() {
     navigate("team")
   }
 
-  const rankedTeams = useMemo(
-    () =>
-      [...teams]
-        .map((team) => ({
-          ...team,
-          netWorth: calculateNetWorth(team, events),
-        }))
-        .sort((a, b) => {
-          if (b.netWorth !== a.netWorth) {
-            return b.netWorth - a.netWorth
-          }
-          return a.name.localeCompare(b.name)
-        }),
-    [teams, events],
-  )
+  // Build full enriched teams with netWorth, member count, history, and change
+  const enrichedTeams = useMemo(() => {
+    const alphabetical = [...rawTeams].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )
+
+    return rawTeams.map((team) => {
+      const netWorth = calculateNetWorth(team, events)
+      const memberCount = participants.filter(
+        (p) => p.team_id === team.id,
+      ).length
+
+      const starting = Number(team.starting_capital) || 100000
+      const change =
+        starting > 0
+          ? Number((((netWorth - starting) / starting) * 100).toFixed(2))
+          : 0
+
+      // Reconstruct progressive history for chart
+      const teamEventsAsc = events
+        .filter((e) => e.team_id === team.id)
+        .slice()
+        .reverse()
+
+      let running = starting
+      const history = [100]
+      for (const ev of teamEventsAsc) {
+        running += ev.type === "penalty" ? -Number(ev.amount) : Number(ev.amount)
+        history.push(Math.round((running / starting) * 100))
+      }
+      if (history.length === 1) history.push(100)
+
+      const initialRank =
+        alphabetical.findIndex((t) => t.id === team.id) + 1 || 1
+
+      return {
+        ...team,
+        members: memberCount,
+        netWorth,
+        change,
+        history,
+        initialRank,
+        lastAction: getLastAction(team.id, events).text,
+      }
+    })
+  }, [rawTeams, events, participants])
+
+  // Ranked teams by Net Worth descending
+  const rankedTeams = useMemo(() => {
+    return [...enrichedTeams].sort((a, b) => {
+      if (b.netWorth !== a.netWorth) {
+        return (b.netWorth ?? 0) - (a.netWorth ?? 0)
+      }
+      return a.name.localeCompare(b.name)
+    })
+  }, [enrichedTeams])
+
+  // Sync selectedTeam with latest enriched data
+  const currentSelectedTeam = useMemo(() => {
+    if (selectedTeam) {
+      return (
+        enrichedTeams.find((t) => t.id === selectedTeam.id) || selectedTeam
+      )
+    }
+    return enrichedTeams[0] || null
+  }, [selectedTeam, enrichedTeams])
 
   return (
     <div className="min-h-screen bg-ink text-white">
@@ -2016,7 +2479,7 @@ export default function App() {
         />
       )}
       {page === "register" && (
-        <Registration teams={teams} navigate={navigate} />
+        <Registration navigate={navigate} onRegistered={fetchData} />
       )}
       {page === "leaderboard" && (
         <Leaderboard
@@ -2029,23 +2492,19 @@ export default function App() {
       )}
       {page === "team" && (
         <TeamPage
-          team={selectedTeam}
+          team={currentSelectedTeam}
           participants={participants}
           events={events}
         />
       )}
       {page === "admin" && (
         <Admin
-          teams={teams}
+          teams={rankedTeams}
           events={events}
           games={games}
           participants={participants}
           isLeaderboardAccessible={isLeaderboardAccessible}
-          setIsLeaderboardAccessible={setIsLeaderboardAccessible}
-          setTeams={setTeams}
-          setEvents={setEvents}
-          setGames={setGames}
-          setParticipants={setParticipants}
+          refetchData={fetchData}
         />
       )}
       {page !== "admin" && <Footer navigate={navigate} />}
