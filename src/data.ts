@@ -14,12 +14,20 @@ export interface Team {
   lastAction?: string
 }
 
+export type ParticipantCategory = "ensia" | "other_school" | "guest"
+
 export interface Participant {
   id: string
   full_name: string
   email?: string
   team_id: string | null
   created_at: string
+  category?: ParticipantCategory
+  school?: string | null
+  study_year?: number | null
+  student_number?: string | null
+  phone?: string | null
+  code?: string
 }
 
 export interface Game {
@@ -39,11 +47,36 @@ export interface ScoreEvent {
   created_at: string
 }
 
+// One money movement for one player; amount is signed (+ earned, - lost)
+export interface Transaction {
+  id: string
+  participant_id: string
+  game_id: string | null
+  amount: number
+  note: string | null
+  batch_id: string | null
+  created_at: string
+}
+
+// Row of the player_balances view
+export interface PlayerBalance {
+  id: string
+  code: string
+  full_name: string
+  study_year: number | null
+  balance: number
+  transaction_count: number
+  last_transaction_at: string | null
+  category: ParticipantCategory
+  school: string | null
+}
+
 export interface Settings {
   id: number
   is_leaderboard_accessible: boolean
   game_status: GameStatus
   registration_opens_at?: string // added for the countdown
+  starting_capital?: number
   updated_at?: string
 }
 

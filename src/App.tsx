@@ -33,6 +33,7 @@ import {
   Game,
   GameStatus,
   Participant,
+  ParticipantCategory,
   ScoreEvent,
   Team,
   calculateNetWorth,
@@ -669,6 +670,36 @@ function RegistrationLocked({
   )
 }
 
+type SavedRegistration = { id: string; code: string; name: string }
+const REGISTRATION_KEY = "wsn.registration"
+
+// The phone remembers who registered on it; storage can be unavailable
+function loadRegistration(): SavedRegistration | null {
+  try {
+    const raw = window.localStorage.getItem(REGISTRATION_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed?.id && parsed?.code ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function saveRegistration(registration: SavedRegistration) {
+  try {
+    window.localStorage.setItem(REGISTRATION_KEY, JSON.stringify(registration))
+  } catch {
+    // The code is still shown on screen
+  }
+}
+
+function clearRegistration() {
+  try {
+    window.localStorage.removeItem(REGISTRATION_KEY)
+  } catch {
+    // Nothing to clear
+  }
+}
+
 function Registration({
   navigate,
   onRegistered,
@@ -680,9 +711,12 @@ function Registration({
   opensAt: Date
   gameStatus: GameStatus
 }) {
-  const [submitted, setSubmitted] = useState(false)
+  const [registration, setRegistration] = useState(loadRegistration)
+  const [justRegistered, setJustRegistered] = useState(false)
+  const [category, setCategory] = useState<ParticipantCategory>("ensia")
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const submitted = registration !== null
   const now = useNow()
   const phase =
     gameStatus !== "setup"
@@ -697,11 +731,30 @@ function Registration({
     const data = new FormData(event.currentTarget)
     const fullName = String(data.get("fullName") || "").trim()
     const email = String(data.get("email") || "").trim().toLowerCase()
+    const phone = String(data.get("phone") || "").trim()
+    const studyYear = Number(data.get("studyYear")) || null
+    const school = String(data.get("school") || "").trim()
+    const studentNumber = String(data.get("studentNumber") || "").trim()
 
     const nextErrors: Record<string, string> = {}
     if (!fullName) nextErrors.fullName = "Tell us who you are."
     if (!email || !email.includes("@"))
       nextErrors.email = "Enter a valid email address."
+    if (!/^\+?[\d\s]{9,15}$/.test(phone))
+      nextErrors.phone = "Enter a valid phone number."
+    if (category === "ensia" && !studyYear)
+      nextErrors.studyYear = "Select your year."
+    if (category === "other_school" && !school)
+      nextErrors.school = "Tell us which school you are from."
+    // Students identify themselves with a school email or a student number
+    if (!studentNumber && !nextErrors.email) {
+      if (category === "ensia" && !email.endsWith("@ensia.edu.dz"))
+        nextErrors.studentNumber =
+          "Use your ENSIA email above, or enter your student number."
+      if (category === "other_school" && !email.endsWith(".edu.dz"))
+        nextErrors.studentNumber =
+          "Use your school email above, or enter your student number."
+    }
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)
@@ -710,25 +763,33 @@ function Registration({
 
     setLoading(true)
     try {
-      const { error } = await supabase.from("participants").insert({
-        full_name: fullName,
-        email: email,
-      })
+      const { data: result, error } = await supabase.rpc(
+        "register_participant",
+        {
+          p_full_name: fullName,
+          p_email: email,
+          p_phone: phone,
+          p_category: category,
+          p_study_year: category === "guest" ? null : studyYear,
+          p_school: category === "other_school" ? school : null,
+          p_student_number: category === "guest" ? null : studentNumber,
+        },
+      )
 
-      if (error) {
-        if (
-          error.code === "23505" ||
-          error.message?.toLowerCase().includes("unique") ||
-          error.message?.toLowerCase().includes("duplicate")
-        ) {
+      if (error || !result?.code) {
+        if (error?.message?.toLowerCase().includes("already registered")) {
           setErrors({ email: "This email is already registered." })
         } else {
           setErrors({
-            general: error.message || "Registration failed. Please try again.",
+            general:
+              error?.message || "Registration failed. Please try again.",
           })
         }
       } else {
-        setSubmitted(true)
+        const saved = { id: result.id, code: result.code, name: fullName }
+        saveRegistration(saved)
+        setRegistration(saved)
+        setJustRegistered(true)
         if (onRegistered) onRegistered()
       }
     } catch {
@@ -818,6 +879,90 @@ function Registration({
                       error={errors.email}
                       disabled={loading}
                     />
+                    <Field
+                      label="Phone number"
+                      name="phone"
+                      type="tel"
+                      placeholder="0550 12 34 56"
+                      error={errors.phone}
+                      disabled={loading}
+                    />
+                    <div className="field-label">
+                      I am
+                      <div className="mt-2 grid grid-cols-3 gap-2">
+                        {(
+                          [
+                            ["ensia", "ENSIA student"],
+                            ["other_school", "Other school"],
+                            ["guest", "Guest"],
+                          ] as const
+                        ).map(([value, label]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            aria-pressed={category === value}
+                            disabled={loading}
+                            onClick={() => {
+                              setCategory(value)
+                              setErrors({})
+                            }}
+                            className={`rounded-xl border px-2 py-2.5 text-xs font-semibold transition ${
+                              category === value
+                                ? "border-gold/60 bg-gold/15 text-gold"
+                                : "border-white/10 text-white/50 hover:border-gold/30 hover:text-white"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {category === "other_school" && (
+                      <Field
+                        label="School"
+                        name="school"
+                        placeholder="Your school's name"
+                        error={errors.school}
+                        disabled={loading}
+                      />
+                    )}
+                    {category !== "guest" && (
+                      <>
+                        <label className="field-label">
+                          {category === "ensia"
+                            ? "Year of study"
+                            : "Year of study (optional)"}
+                          <select
+                            className="field-control"
+                            name="studyYear"
+                            defaultValue=""
+                            disabled={loading}
+                            aria-invalid={Boolean(errors.studyYear)}
+                          >
+                            <option value="">Select your year</option>
+                            {["1st", "2nd", "3rd", "4th", "5th"].map(
+                              (label, index) => (
+                                <option key={label} value={index + 1}>
+                                  {label} year
+                                </option>
+                              ),
+                            )}
+                          </select>
+                          {errors.studyYear && (
+                            <span className="field-error">
+                              {errors.studyYear}
+                            </span>
+                          )}
+                        </label>
+                        <Field
+                          label="Student number (only if you didn't use your school email)"
+                          name="studentNumber"
+                          placeholder="Student card number"
+                          error={errors.studentNumber}
+                          disabled={loading}
+                        />
+                      </>
+                    )}
                   </div>
                   <Button
                     type="submit"
@@ -838,7 +983,7 @@ function Registration({
                   animate={{ opacity: 1, scale: 1 }}
                   className="flex min-h-96 flex-col items-center justify-center text-center"
                 >
-                  <Confetti />
+                  {justRegistered && <Confetti />}
                   <div className="flex size-20 items-center justify-center rounded-full border border-gold/25 bg-gold/10 text-gold">
                     <Check size={34} />
                   </div>
@@ -846,15 +991,40 @@ function Registration({
                     You're on the floor.
                   </h2>
                   <p className="mt-3 max-w-sm text-white/50">
-                    Registration confirmed. Your $10,000 is waiting for you on
-                    October 7.
+                    {registration?.name
+                      ? `${registration.name}, your`
+                      : "Your"}{" "}
+                    $10,000 is waiting for you on October 7.
                   </p>
+                  <div className="mt-6 w-full max-w-xs rounded-2xl border border-gold/25 bg-ink/60 px-6 py-5">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                      Your trader code
+                    </p>
+                    <p className="mt-2 font-mono text-4xl font-semibold tracking-wider text-gold">
+                      {registration?.code}
+                    </p>
+                    <p className="mt-3 text-xs leading-relaxed text-white/45">
+                      Show this code at every game so your winnings go to your
+                      account. Take a screenshot.
+                    </p>
+                  </div>
                   <Button
                     onClick={() => navigate("leaderboard")}
                     className="mt-7"
                   >
                     Visit the market <ArrowRight size={16} />
                   </Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearRegistration()
+                      setRegistration(null)
+                      setJustRegistered(false)
+                    }}
+                    className="mt-4 text-xs text-white/30 underline-offset-4 hover:text-white/60 hover:underline"
+                  >
+                    Not you? Register someone else
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
