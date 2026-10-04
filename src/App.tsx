@@ -1,4 +1,11 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react"
+import {
+  FormEvent,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   Activity,
@@ -30,26 +37,30 @@ import logo from "./imports/ebecLogo.jpg"
 import { supabase } from "./utils/supabase"
 import {
   DEFAULT_REGISTRATION_OPENS_AT,
+  DEFAULT_STARTING_CAPITAL,
   Game,
   GameStatus,
   Participant,
   ParticipantCategory,
-  ScoreEvent,
-  Team,
-  calculateNetWorth,
+  Player, // instead of team approach
+  PlayerBalance,
+  Transaction,
   formatMoney,
+  formatSigned,
   getLastAction,
-  getRankChange,
+  normalizeCode,
+  playerSubtitle,
+  rankPlayers,
 } from "./data"
 
-type Page = "home" | "register" | "leaderboard" | "team" | "admin"
-type AdminTab = "overview" | "teams" | "members" | "scoring" | "games" | "activity"
+type Page = "home" | "register" | "leaderboard" | "portfolio" | "admin"
+type AdminTab = "overview" | "players" | "scoring" | "games" | "activity"
 
 const pageFromPath = (): Page => {
   const path = window.location.pathname
   if (path.startsWith("/register")) return "register"
   if (path.startsWith("/leaderboard")) return "leaderboard"
-  if (path.startsWith("/team")) return "team"
+  if (path.startsWith("/portfolio")) return "portfolio"
   if (path.startsWith("/admin")) return "admin"
   return "home"
 }
@@ -58,7 +69,7 @@ const paths: Record<Page, string> = {
   home: "/",
   register: "/register",
   leaderboard: "/leaderboard",
-  team: "/team",
+  portfolio: "/portfolio",
   admin: "/admin",
 }
 
@@ -139,7 +150,7 @@ function Navbar({
               <LockKeyhole size={13} className="text-gold" />
             )}
           </button>
-          <button onClick={() => nav("team")} className="nav-link">
+          <button onClick={() => nav("portfolio")} className="nav-link">
             Portfolio
           </button>
           <Button onClick={() => nav("register")}>
@@ -163,7 +174,7 @@ function Navbar({
             className="overflow-hidden border-t border-white/8 bg-ink px-5 md:hidden"
           >
             <div className="flex flex-col gap-2 py-5">
-              {(["home", "leaderboard", "team", "register"] as Page[]).map(
+              {(["home", "leaderboard", "portfolio", "register"] as Page[]).map(
                 (item) => (
                   <button
                     key={item}
@@ -172,9 +183,7 @@ function Navbar({
                   >
                     {item === "home"
                       ? "The event"
-                      : item === "team"
-                        ? "Portfolio"
-                        : item}
+                      : item}
                     <ChevronRight size={16} />
                   </button>
                 ),
@@ -188,13 +197,13 @@ function Navbar({
 }
 
 function Ticker({
-  events,
-  teams,
+  transactions,
+  players,
 }: {
-  events: ScoreEvent[]
-  teams: Team[]
+  transactions: Transaction[]
+  players: Player[]
 }) {
-  if (!events.length) {
+  if (!transactions.length) {
     return (
       <div className="ticker" aria-label="Latest scoring activity">
         <div className="ticker-track">
@@ -207,18 +216,20 @@ function Ticker({
     )
   }
 
-  const displayList = events.length < 4 ? [...events, ...events, ...events] : [...events, ...events]
-  const labels = displayList.map((event, index) => {
-    const team = teams.find((item) => item.id === event.team_id)
+  const recent = transactions.slice(0, 20)
+  const displayList =
+    recent.length < 4 ? [...recent, ...recent, ...recent] : [...recent, ...recent]
+  const labels = displayList.map((item, index) => {
+    const player = players.find((p) => p.id === item.participant_id)
+    const amount = Number(item.amount)
     return (
-      <span className="ticker-item" key={`${event.id}-${index}`}>
-        <span className="text-white/55">{team?.ticker || "FIRM"}</span>
-        <span className={event.type === "penalty" ? "text-loss" : "text-gain"}>
-          {event.type === "penalty" ? "−" : "+"}
-          {formatMoney(event.amount)}
+      <span className="ticker-item" key={`${item.id}-${index}`}>
+        <span className="text-white/55">{player?.code || "TRADER"}</span>
+        <span className={amount < 0 ? "text-loss" : "text-gain"}>
+          {formatSigned(amount)}
         </span>
         <span className="text-white/35">
-          {event.type === "penalty" ? "Penalty applied" : "Win bonus"}
+          {item.note || (amount < 0 ? "Loss" : "Win")}
         </span>
       </span>
     )
@@ -231,40 +242,37 @@ function Ticker({
 }
 
 function Podium({
-  teams,
-  onTeam,
+  players,
+  onPlayer,
 }: {
-  teams: Team[]
-  onTeam: (team: Team) => void
+  players: Player[]
+  onPlayer: (player: Player) => void
 }) {
-  if (!teams || teams.length === 0) {
+  if (!players || players.length === 0) {
     return null
   }
-  const top3 = [teams[1], teams[0], teams[2]].filter(Boolean)
+  const top3 = [players[1], players[0], players[2]].filter(Boolean)
   return (
     <div className="grid grid-cols-3 items-end gap-2 sm:gap-4">
-      {top3.map((team, index) => {
-        const rank = index === 0 && teams[1] ? 2 : index === 1 || !teams[1] ? 1 : 3
-        return (
-          <motion.button
-            whileHover={{ y: -5 }}
-            onClick={() => onTeam(team)}
-            className={`podium-card podium-${rank}`}
-            key={team.id}
-          >
-            <div className="relative mx-auto mb-3 flex size-12 items-center justify-center rounded-full border border-gold/30 bg-gold/10 font-display text-xl text-gold sm:size-16">
-              {team.name.charAt(0)}
-              <span className="rank-badge">{rank}</span>
-            </div>
-            <p className="truncate text-sm font-semibold text-white sm:text-base">
-              {team.name}
-            </p>
-            <p className="mt-1 font-mono text-xs text-gold sm:text-sm">
-              {formatMoney(team.netWorth)}
-            </p>
-          </motion.button>
-        )
-      })}
+      {top3.map((player) => (
+        <motion.button
+          whileHover={{ y: -5 }}
+          onClick={() => onPlayer(player)}
+          className={`podium-card podium-${player.rank}`}
+          key={player.id}
+        >
+          <div className="relative mx-auto mb-3 flex size-12 items-center justify-center rounded-full border border-gold/30 bg-gold/10 font-display text-xl text-gold sm:size-16">
+            {player.full_name.charAt(0)}
+            <span className="rank-badge">{player.rank}</span>
+          </div>
+          <p className="truncate text-sm font-semibold text-white sm:text-base">
+            {player.full_name}
+          </p>
+          <p className="mt-1 font-mono text-xs text-gold sm:text-sm">
+            {formatMoney(player.balance)}
+          </p>
+        </motion.button>
+      ))}
     </div>
   )
 }
@@ -289,13 +297,12 @@ const SectionTitle = ({
 
 function Landing({
   navigate,
-  teams,
-  events,
+  players,
+  transactions,
 }: {
   navigate: (page: Page) => void
-  teams: Team[]
-  events: ScoreEvent[]
-  openTeam: (team: Team) => void
+  players: Player[]
+  transactions: Transaction[]
 }) {
   return (
     <main>
@@ -557,7 +564,7 @@ function Landing({
           </div>
         </div>
       </section>
-      <Ticker events={events} teams={teams} />
+      <Ticker transactions={transactions} players={players} />
     </main>
   )
 }
@@ -705,13 +712,16 @@ function Registration({
   onRegistered,
   opensAt,
   gameStatus,
+  registration,
+  setRegistration,
 }: {
   navigate: (page: Page) => void
   onRegistered?: () => void
   opensAt: Date
   gameStatus: GameStatus
+  registration: SavedRegistration | null
+  setRegistration: (registration: SavedRegistration | null) => void
 }) {
-  const [registration, setRegistration] = useState(loadRegistration)
   const [justRegistered, setJustRegistered] = useState(false)
   const [category, setCategory] = useState<ParticipantCategory>("ensia")
   const [loading, setLoading] = useState(false)
@@ -1091,19 +1101,21 @@ function Confetti() {
 }
 
 function Leaderboard({
-  teams,
-  events,
-  openTeam,
+  players,
+  transactions,
+  openPlayer,
   isAccessible,
   gameStatus = "setup",
   navigate,
+  myId,
 }: {
-  teams: Team[]
-  events: ScoreEvent[]
-  openTeam: (team: Team) => void
+  players: Player[]
+  transactions: Transaction[]
+  openPlayer: (player: Player) => void
   isAccessible: boolean
   gameStatus?: GameStatus
   navigate: (page: Page) => void
+  myId: string | null
 }) {
   const [query, setQuery] = useState("")
 
@@ -1136,9 +1148,13 @@ function Leaderboard({
     )
   }
 
-  const filtered = teams.filter((team) =>
-    team.name.toLowerCase().includes(query.toLowerCase()),
+  const search = query.trim().toLowerCase()
+  const filtered = players.filter(
+    (player) =>
+      player.full_name.toLowerCase().includes(search) ||
+      player.code.toLowerCase().includes(search),
   )
+  const me = myId ? players.find((player) => player.id === myId) : undefined
 
   return (
     <main className="page-shell">
@@ -1166,7 +1182,7 @@ function Leaderboard({
             <p className="mt-3 text-white/45">
               {gameStatus === "ended"
                 ? "The market has closed. Final portfolio valuations are locked."
-                : "Every point counts. Every position is live."}
+                : "Every dollar counts. Every position is live."}
             </p>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3 text-right">
@@ -1184,8 +1200,30 @@ function Leaderboard({
             )}
           </div>
         </div>
+        {me && (
+          <button
+            onClick={() => openPlayer(me)}
+            className="mb-10 flex w-full items-center justify-between gap-4 rounded-2xl border border-gold/30 bg-gold/8 px-5 py-4 text-left transition hover:border-gold/60"
+          >
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-gold">
+                Your position
+              </p>
+              <p className="mt-1 truncate font-display text-xl text-white">
+                #{me.rank}{" "}
+                <span className="text-sm text-white/40">
+                  of {players.length}
+                </span>{" "}
+                · {me.full_name}
+              </p>
+            </div>
+            <p className="font-mono text-xl font-semibold text-gold">
+              {formatMoney(me.balance)}
+            </p>
+          </button>
+        )}
         <div className="mb-12 mx-auto max-w-4xl">
-          <Podium teams={teams.slice(0, 3)} onTeam={openTeam} />
+          <Podium players={players.slice(0, 3)} onPlayer={openPlayer} />
         </div>
         <div className="overflow-hidden rounded-2xl border border-white/8 bg-panel">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 p-5">
@@ -1204,8 +1242,8 @@ function Leaderboard({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Find a team"
-                aria-label="Search teams"
+                placeholder="Find a player or code"
+                aria-label="Search players"
               />
             </label>
           </div>
@@ -1213,48 +1251,48 @@ function Leaderboard({
             <div className="min-w-[760px]">
               <div className="table-head hidden md:grid">
                 <span>Rank</span>
-                <span>Firm</span>
-                <span>Last Action</span>
+                <span>Player</span>
+                <span>Last trade</span>
                 <span className="text-right">Net worth</span>
-                <span className="text-right">Changes</span>
+                <span className="text-right">Change</span>
               </div>
               <motion.div layout>
-                {filtered.map((team, idx) => {
-                  const currentRank = idx + 1
-                  const initialRank = team.initialRank ?? currentRank
-                  const lastAction = getLastAction(
-                    team.id,
-                    events,
-                    team.lastAction,
-                  )
-                  const rankChange = getRankChange(initialRank, currentRank)
+                {filtered.map((player) => {
+                  const lastAction = getLastAction(player.id, transactions)
 
                   return (
                     <motion.button
                       layout
-                      key={team.id}
-                      onClick={() => openTeam(team)}
-                      className="leader-row"
+                      key={player.id}
+                      onClick={() => openPlayer(player)}
+                      className={`leader-row ${
+                        player.id === myId ? "bg-gold/5" : ""
+                      }`}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                     >
                       <div className="flex items-center gap-2">
                         <span
                           className={`rank-number ${
-                            currentRank <= 3 ? "text-gold" : ""
+                            player.rank <= 3 ? "text-gold" : ""
                           }`}
                         >
-                          {String(currentRank).padStart(2, "0")}
+                          {String(player.rank).padStart(2, "0")}
                         </span>
                       </div>
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="team-avatar">{team.name.charAt(0)}</div>
+                        <div className="team-avatar">
+                          {player.full_name.charAt(0)}
+                        </div>
                         <div className="text-left truncate">
                           <p className="font-medium text-white truncate">
-                            {team.name}
+                            {player.full_name}
+                            {player.id === myId && (
+                              <span className="ml-2 text-xs text-gold">You</span>
+                            )}
                           </p>
                           <p className="text-xs text-white/30 truncate">
-                            {team.ticker} · {team.members ?? 0} partners
+                            {playerSubtitle(player)}
                           </p>
                         </div>
                       </div>
@@ -1272,72 +1310,127 @@ function Leaderboard({
                         </span>
                       </div>
                       <span className="text-right font-mono text-base font-semibold text-white">
-                        {formatMoney(team.netWorth)}
+                        {formatMoney(player.balance)}
                       </span>
                       <div className="text-right">
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
-                            rankChange.diff > 0
+                            player.change > 0
                               ? "border border-gain/25 bg-gain/10 text-gain"
-                              : rankChange.diff < 0
+                              : player.change < 0
                                 ? "border border-loss/25 bg-loss/10 text-loss"
                                 : "border border-white/10 bg-white/5 text-white/40"
                           }`}
                         >
-                          {rankChange.diff > 0 && <ArrowUpRight size={13} />}
-                          {rankChange.diff < 0 && <ArrowDownRight size={13} />}
-                          {rankChange.text}
+                          {player.change > 0 && <ArrowUpRight size={13} />}
+                          {player.change < 0 && <ArrowDownRight size={13} />}
+                          {player.change === 0
+                            ? "No change"
+                            : `${Math.abs(player.change)}%`}
                         </span>
                       </div>
                     </motion.button>
                   )
                 })}
+                {filtered.length === 0 && (
+                  <p className="py-8 text-center text-sm text-white/30">
+                    {players.length === 0
+                      ? "No players registered yet."
+                      : "No player matches your search."}
+                  </p>
+                )}
               </motion.div>
             </div>
           </div>
         </div>
       </section>
-      <Ticker events={events} teams={teams} />
+      <Ticker transactions={transactions} players={players} />
     </main>
   )
 }
 
-function TeamPage({
-  team,
-  participants,
-  events,
+function PlayerPage({
+  player,
+  totalPlayers,
+  startingCapital,
+  games,
+  isMe,
+  navigate,
 }: {
-  team: Team | null
-  participants: Participant[]
-  events: ScoreEvent[]
+  player: Player | null
+  totalPlayers: number
+  startingCapital: number
+  games: Game[]
+  isMe: boolean
+  navigate: (page: Page) => void
 }) {
-  if (!team) {
+  const [history, setHistory] = useState<Transaction[]>([])
+  const playerId = player?.id
+  const balance = player?.balance
+
+  // Full history of this player, newest first; reloads when the balance moves
+  useEffect(() => {
+    if (!playerId) return
+    let cancelled = false
+    supabase
+      .from("transactions")
+      .select("*")
+      .eq("participant_id", playerId)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (!cancelled && data) setHistory(data)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [playerId, balance])
+
+  if (!player) {
     return (
       <main className="page-shell flex items-center justify-center px-5 py-20">
-        <p className="text-white/50">Select a team from the leaderboard.</p>
+        <div className="mx-auto max-w-md text-center">
+          <p className="text-white/50">
+            Register to get your own portfolio, or pick a player from the
+            leaderboard.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <Button onClick={() => navigate("register")}>
+              Register <ArrowRight size={16} />
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("leaderboard")}>
+              View leaderboard
+            </Button>
+          </div>
+        </div>
       </main>
     )
   }
 
-  const teamEvents = events.filter((event) => event.team_id === team.id)
-  const history = team.history && team.history.length > 1 ? team.history : [100, 100]
-  const max = Math.max(...history, 101)
-  const min = Math.min(...history, 99)
-  const chartPath = history
+  const ownHistory = history.filter((item) => item.participant_id === player.id)
+  let running = startingCapital
+  const points = [100]
+  for (const item of [...ownHistory].reverse()) {
+    running += Number(item.amount)
+    points.push(Math.round((running / (startingCapital || 1)) * 100))
+  }
+  if (points.length === 1) points.push(100)
+  const max = Math.max(...points, 101)
+  const min = Math.min(...points, 99)
+  const chartPath = points
     .map((value, index) => {
-      const x = (index / Math.max(1, history.length - 1)) * 720
+      const x = (index / Math.max(1, points.length - 1)) * 720
       const range = max - min || 1
       const y = 190 - ((value - min) / range) * 140
       return `${index === 0 ? "M" : "L"} ${x} ${y}`
     })
     .join(" ")
 
-  const bonuses = teamEvents
-    .filter((e) => e.type === "bonus")
-    .reduce((sum, e) => sum + Number(e.amount), 0)
-  const penalties = teamEvents
-    .filter((e) => e.type === "penalty")
-    .reduce((sum, e) => sum + Number(e.amount), 0)
+  const earned = ownHistory
+    .filter((item) => Number(item.amount) > 0)
+    .reduce((sum, item) => sum + Number(item.amount), 0)
+  const lost = ownHistory
+    .filter((item) => Number(item.amount) < 0)
+    .reduce((sum, item) => sum - Number(item.amount), 0)
 
   return (
     <main className="page-shell">
@@ -1345,34 +1438,39 @@ function TeamPage({
         <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
           <div className="flex items-center gap-5">
             <div className="flex size-16 items-center justify-center rounded-2xl border border-gold/25 bg-gold/10 font-display text-3xl text-gold">
-              {team.name.charAt(0)}
+              {player.full_name.charAt(0)}
             </div>
             <div>
-              <p className="eyebrow">Portfolio · {team.ticker}</p>
-              <h1 className="font-display text-4xl text-white">{team.name}</h1>
+              <p className="eyebrow">
+                {isMe ? "Your portfolio" : "Portfolio"} ·{" "}
+                {playerSubtitle(player)}
+              </p>
+              <h1 className="font-display text-4xl text-white">
+                {player.full_name}
+              </h1>
             </div>
           </div>
           <div className="text-left sm:text-right">
             <p className="text-xs uppercase tracking-widest text-white/35">
-              Current net worth
+              Current net worth · Rank #{player.rank} of {totalPlayers}
             </p>
             <p className="mt-1 font-mono text-3xl font-semibold text-gold">
-              {formatMoney(team.netWorth)}
+              {formatMoney(player.balance)}
             </p>
           </div>
         </div>
-        <div className="grid gap-5 lg:grid-cols-[1.5fr_.8fr]">
+        <div className="grid gap-5">
           <div className="glass-card p-6">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-white/40">Portfolio performance</p>
                 <p
                   className={`mt-1 text-sm ${
-                    (team.change ?? 0) >= 0 ? "text-gain" : "text-loss"
+                    player.change >= 0 ? "text-gain" : "text-loss"
                   }`}
                 >
-                  {(team.change ?? 0) >= 0 ? "▲" : "▼"}{" "}
-                  {Math.abs(team.change ?? 0)}% tonight
+                  {player.change >= 0 ? "▲" : "▼"} {Math.abs(player.change)}%
+                  today
                 </p>
               </div>
               <span className="rounded-full bg-gain/10 px-3 py-1 text-xs text-gain">
@@ -1382,7 +1480,7 @@ function TeamPage({
             <svg
               viewBox="0 0 720 220"
               className="mt-7 w-full overflow-visible"
-              aria-label="Score history"
+              aria-label="Balance history"
             >
               <defs>
                 <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
@@ -1414,93 +1512,68 @@ function TeamPage({
             <div className="mt-4 grid grid-cols-3 gap-3 border-t border-white/8 pt-5">
               <Metric
                 label="Starting capital"
-                value={formatMoney(team.starting_capital)}
+                value={formatMoney(startingCapital)}
               />
-              <Metric label="Bonuses" value={`+${formatMoney(bonuses)}`} green />
-              <Metric label="Penalties" value={`−${formatMoney(penalties)}`} />
+              <Metric label="Earned" value={`+${formatMoney(earned)}`} green />
+              <Metric label="Lost" value={`−${formatMoney(lost)}`} />
             </div>
           </div>
           <div className="glass-card p-6">
             <h2 className="font-display text-xl text-white">
-              Managing partners
-            </h2>
-            <div className="mt-5 space-y-4">
-              {participants
-                .filter((member) => member.team_id === team.id)
-                .map((member, index) => (
-                  <div className="flex items-center gap-3" key={member.id}>
-                    <div className="member-avatar">
-                      {member.full_name
-                        .split(" ")
-                        .map((part) => part[0])
-                        .join("")}
-                    </div>
-                    <div>
-                      <p className="text-sm text-white">{member.full_name}</p>
-                      <p className="text-xs text-white/35">
-                        {index === 0 ? "Managing partner" : "Partner"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              {participants.filter((m) => m.team_id === team.id).length === 0 && (
-                <p className="text-xs text-white/40">
-                  No partners assigned yet.
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="glass-card p-6 lg:col-span-2">
-            <h2 className="font-display text-xl text-white">
               Recent transactions
             </h2>
             <div className="mt-4 divide-y divide-white/6">
-              {teamEvents.map((event) => (
-                <div
-                  className="flex items-center justify-between gap-4 py-4"
-                  key={event.id}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`flex size-9 items-center justify-center rounded-lg ${
-                        event.type === "penalty"
-                          ? "bg-loss/10 text-loss"
-                          : "bg-gain/10 text-gain"
+              {ownHistory.map((item) => {
+                const amount = Number(item.amount)
+                const game = games.find((g) => g.id === item.game_id)
+                return (
+                  <div
+                    className="flex items-center justify-between gap-4 py-4"
+                    key={item.id}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`flex size-9 items-center justify-center rounded-lg ${
+                          amount < 0
+                            ? "bg-loss/10 text-loss"
+                            : "bg-gain/10 text-gain"
+                        }`}
+                      >
+                        {amount < 0 ? (
+                          <ArrowDownRight size={17} />
+                        ) : (
+                          <ArrowUpRight size={17} />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm text-white">
+                          {game?.name || (amount < 0 ? "Loss" : "Win")}
+                          {item.note && (
+                            <span className="text-white/45"> · {item.note}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-white/30">
+                          {new Date(item.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`font-mono text-sm ${
+                        amount < 0 ? "text-loss" : "text-gain"
                       }`}
                     >
-                      {event.type === "penalty" ? (
-                        <ArrowDownRight size={17} />
-                      ) : (
-                        <ArrowUpRight size={17} />
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm text-white">
-                        {event.type === "penalty"
-                          ? "Penalty applied"
-                          : "Win bonus awarded"}
-                      </p>
-                      <p className="text-xs text-white/30">
-                        {new Date(event.created_at).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                    </div>
+                      {formatSigned(amount)}
+                    </span>
                   </div>
-                  <span
-                    className={`font-mono text-sm ${
-                      event.type === "penalty" ? "text-loss" : "text-gain"
-                    }`}
-                  >
-                    {event.type === "penalty" ? "−" : "+"}
-                    {formatMoney(event.amount)}
-                  </span>
-                </div>
-              ))}
-              {teamEvents.length === 0 && (
+                )
+              })}
+              {ownHistory.length === 0 && (
                 <p className="py-4 text-xs text-white/40">
-                  No transactions recorded for this team.
+                  No transactions yet. The starting capital is waiting to be
+                  put to work.
                 </p>
               )}
             </div>
@@ -1537,16 +1610,16 @@ function Metric({
 }
 
 function Admin({
-  teams,
-  events,
+  players,
+  transactions,
   games,
   participants,
   isLeaderboardAccessible,
   gameStatus,
   refetchData,
 }: {
-  teams: Team[]
-  events: ScoreEvent[]
+  players: Player[]
+  transactions: Transaction[]
   games: Game[]
   participants: Participant[]
   isLeaderboardAccessible: boolean
@@ -1584,6 +1657,11 @@ function Admin({
     checkAuth()
   }, [])
 
+  // Player emails and phones are only loaded once an admin is signed in
+  useEffect(() => {
+    if (authed) refetchData()
+  }, [authed])
+
   if (authed === null) {
     return (
       <main className="page-shell flex items-center justify-center px-5 py-20">
@@ -1601,38 +1679,30 @@ function Admin({
     setAuthed(false)
   }
 
-  const createEqualTeams = async () => {
+  const startGame = async () => {
     if (gameStatus !== "setup") {
-      setNotice("⚠️ Game has already started. Teams cannot be created again.")
+      setNotice("⚠️ Game has already started.")
       return
     }
+    const confirmed = window.confirm(
+      "Start the game? Registration closes and the leaderboard opens for everyone.",
+    )
+    if (!confirmed) return
+
     setLoadingAction(true)
     try {
-      const { error } = await supabase.rpc("create_equal_teams")
+      const { error } = await supabase.rpc("start_game")
       if (error) {
-        if (
-          error.message?.toLowerCase().includes("already started") ||
-          error.message?.toLowerCase().includes("cannot")
-        ) {
-          await refetchData()
-          setNotice("⚠️ Game already started. Switching to active phase.")
-        } else {
-          setNotice(`⚠️ Error creating equal teams: ${error.message}`)
-        }
+        setNotice(`⚠️ Error starting game: ${error.message}`)
       } else {
         await refetchData()
         setNotice(
-          "🎲 Equal teams distributed randomly across alphabetical teams! Game is now live.",
+          "🔔 The opening bell has rung. The game is live and scoring is open.",
         )
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.toLowerCase().includes("already started")) {
-        await refetchData()
-        setNotice("⚠️ Game already started.")
-      } else {
-        setNotice(`⚠️ Action failed: ${msg}`)
-      }
+      setNotice(`⚠️ Action failed: ${msg}`)
     } finally {
       setLoadingAction(false)
     }
@@ -1690,59 +1760,6 @@ function Admin({
           ? "🔓 Live leaderboard is now accessible to all participants."
           : "🔒 Live leaderboard is now locked.",
       )
-    }
-  }
-
-  const addScore = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (gameStatus !== "live") {
-      setNotice(
-        gameStatus === "setup"
-          ? "⚠️ Scoring opens when the game starts."
-          : "⚠️ Scoring is locked because the game has ended.",
-      )
-      return
-    }
-
-    const form = new FormData(event.currentTarget)
-    const teamId = String(form.get("team"))
-    const gameId = String(form.get("game")) || null
-    const amount = Number(form.get("amount"))
-    const type = String(form.get("type")) as ScoreEvent["type"]
-
-    const { error } = await supabase.from("score_events").insert({
-      team_id: teamId,
-      game_id: gameId,
-      type,
-      amount,
-    })
-
-    if (error) {
-      setNotice(`⚠️ Failed to post score: ${error.message}`)
-    } else {
-      setNotice("Score posted to the live market.")
-      event.currentTarget.reset()
-      await refetchData()
-    }
-  }
-
-  const undoLastScore = async () => {
-    if (gameStatus !== "live") {
-      setNotice("⚠️ Cannot undo transactions when game is not live.")
-      return
-    }
-    if (!events.length) return
-    const latest = events[0]
-    const { error } = await supabase
-      .from("score_events")
-      .delete()
-      .eq("id", latest.id)
-
-    if (error) {
-      setNotice(`⚠️ Failed to undo transaction: ${error.message}`)
-    } else {
-      setNotice("Latest transaction undone.")
-      await refetchData()
     }
   }
 
@@ -1806,9 +1823,9 @@ function Admin({
                 </div>
 
                 {gameStatus === "setup" && (
-                  <Button onClick={createEqualTeams} disabled={loadingAction}>
+                  <Button onClick={startGame} disabled={loadingAction}>
                     <Sparkles size={14} />
-                    {loadingAction ? "Distributing..." : "Create Equal Teams"}
+                    {loadingAction ? "Starting..." : "Start Game"}
                   </Button>
                 )}
                 {gameStatus === "live" && (
@@ -1864,44 +1881,38 @@ function Admin({
             )}
             {tab === "overview" && (
               <AdminOverview
-                teams={teams}
-                events={events}
+                players={players}
+                transactions={transactions}
                 games={games}
-                participants={participants}
               />
             )}
-            {tab === "teams" && (
-              <TeamsPanel
-                teams={teams}
-                gameStatus={gameStatus}
-                createEqualTeams={createEqualTeams}
-                endGame={endGame}
-                loadingAction={loadingAction}
-                refetchData={refetchData}
-              />
-            )}
-            {tab === "members" && (
-              <MembersPanel
-                teams={teams}
+            {tab === "players" && (
+              <PlayersPanel
+                players={players}
                 participants={participants}
                 refetchData={refetchData}
+                setNotice={setNotice}
               />
             )}
             {tab === "scoring" && (
-              <ScoringPanel
-                teams={teams}
+              <BankerPanel
+                players={players}
                 games={games}
-                events={events}
+                transactions={transactions}
                 gameStatus={gameStatus}
-                onSubmit={addScore}
-                undo={undoLastScore}
+                refetchData={refetchData}
+                setNotice={setNotice}
               />
             )}
             {tab === "games" && (
               <GamesPanel games={games} refetchData={refetchData} />
             )}
             {tab === "activity" && (
-              <ActivityPanel events={events} teams={teams} />
+              <ActivityPanel
+                transactions={transactions}
+                players={players}
+                games={games}
+              />
             )}
           </div>
         </div>
@@ -2016,8 +2027,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 
 const adminItems: [AdminTab, typeof BarChart3][] = [
   ["overview", BarChart3],
-  ["teams", BriefcaseBusiness],
-  ["members", Users],
+  ["players", Users],
   ["scoring", CircleDollarSign],
   ["games", Gamepad2],
   ["activity", Activity],
@@ -2051,30 +2061,31 @@ function AdminNav({
 }
 
 function AdminOverview({
-  teams,
-  events,
+  players,
+  transactions,
   games,
-  participants,
 }: {
-  teams: Team[]
-  events: ScoreEvent[]
+  players: Player[]
+  transactions: Transaction[]
   games: Game[]
-  participants: Participant[]
 }) {
   const gamesPlayed = games.filter((g) => g.status === "done").length
-  const totalBonuses = events
-    .filter((item) => item.type === "bonus")
-    .reduce((sum, item) => sum + Number(item.amount), 0)
+  const moneyInPlay = players.reduce((sum, player) => sum + player.balance, 0)
 
   const kpis = [
-    [BriefcaseBusiness, "Teams", teams.length, "Active syndicates"],
-    [Users, "Participants", participants.length, "Registered"],
-    [Gamepad2, "Games played", gamesPlayed, `of ${games.length} total`],
+    [Users, "Players", players.length, "Registered"],
     [
       CircleDollarSign,
-      "Bonuses awarded",
-      formatMoney(totalBonuses),
-      "Across all games",
+      "Money in play",
+      formatMoney(moneyInPlay),
+      "Across all wallets",
+    ],
+    [Gamepad2, "Games played", gamesPlayed, `of ${games.length} total`],
+    [
+      Trophy,
+      "Top balance",
+      formatMoney(players[0]?.balance ?? 0),
+      players[0]?.full_name ?? "No players yet",
     ],
   ]
   return (
@@ -2098,58 +2109,65 @@ function AdminOverview({
       </div>
       <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
         <div className="admin-card">
-          <h2 className="font-display text-xl text-white">Top firms</h2>
+          <h2 className="font-display text-xl text-white">Top players</h2>
           <div className="mt-4 divide-y divide-white/6">
-            {teams.slice(0, 5).map((team, index) => (
+            {players.slice(0, 6).map((player) => (
               <div
                 className="flex items-center justify-between py-3"
-                key={team.id}
+                key={player.id}
               >
                 <div className="flex items-center gap-3">
                   <span className="w-5 font-mono text-xs text-gold">
-                    {index + 1}
+                    {player.rank}
                   </span>
                   <div>
-                    <p className="text-sm text-white">{team.name}</p>
-                    <p className="text-xs text-white/30">{team.ticker}</p>
+                    <p className="text-sm text-white">{player.full_name}</p>
+                    <p className="text-xs text-white/30">
+                      {playerSubtitle(player)}
+                    </p>
                   </div>
                 </div>
                 <span className="font-mono text-sm text-white">
-                  {formatMoney(team.netWorth)}
+                  {formatMoney(player.balance)}
                 </span>
               </div>
             ))}
-            {teams.length === 0 && (
-              <p className="py-4 text-xs text-white/30">No teams found.</p>
+            {players.length === 0 && (
+              <p className="py-4 text-xs text-white/30">No players yet.</p>
             )}
           </div>
         </div>
         <div className="admin-card">
           <h2 className="font-display text-xl text-white">Recent activity</h2>
           <div className="mt-4 space-y-4">
-            {events.slice(0, 5).map((event) => (
-              <div className="flex gap-3" key={event.id}>
-                <span
-                  className={`mt-1 size-2 shrink-0 rounded-full ${
-                    event.type === "penalty" ? "bg-loss" : "bg-gain"
-                  }`}
-                />
-                <div>
-                  <p className="text-sm text-white/75">
-                    {event.type === "penalty"
-                      ? "Penalty applied"
-                      : "Win bonus awarded"}
-                  </p>
-                  <p className="mt-0.5 text-xs text-white/25">
-                    {new Date(event.created_at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
+            {transactions.slice(0, 5).map((item) => {
+              const amount = Number(item.amount)
+              return (
+                <div className="flex gap-3" key={item.id}>
+                  <span
+                    className={`mt-1 size-2 shrink-0 rounded-full ${
+                      amount < 0 ? "bg-loss" : "bg-gain"
+                    }`}
+                  />
+                  <div>
+                    <p className="text-sm text-white/75">
+                      {players.find((p) => p.id === item.participant_id)
+                        ?.full_name || "Unknown player"}{" "}
+                      <span className={amount < 0 ? "text-loss" : "text-gain"}>
+                        {formatSigned(amount)}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-white/25">
+                      {new Date(item.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
-            {events.length === 0 && (
+              )
+            })}
+            {transactions.length === 0 && (
               <p className="text-xs text-white/30">No activity yet.</p>
             )}
           </div>
@@ -2159,52 +2177,70 @@ function AdminOverview({
   )
 }
 
-function TeamsPanel({
-  teams,
-  gameStatus,
-  createEqualTeams,
-  endGame,
-  loadingAction,
+function PlayersPanel({
+  players,
+  participants,
   refetchData,
+  setNotice,
 }: {
-  teams: Team[]
-  gameStatus: GameStatus
-  createEqualTeams: () => Promise<void>
-  endGame: () => Promise<void>
-  loadingAction: boolean
+  players: Player[]
+  participants: Participant[]
   refetchData: () => Promise<void>
+  setNotice: (notice: string) => void
 }) {
   const [query, setQuery] = useState("")
-  const [isAdding, setIsAdding] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [category, setCategory] = useState<ParticipantCategory>("ensia")
+  const [saving, setSaving] = useState(false)
 
-  const handleAddTeam = async () => {
-    if (gameStatus !== "setup") return
-    const name = prompt("Enter new team name:")
-    if (!name?.trim()) return
-    const ticker =
-      prompt("Enter team ticker (3-4 chars):")?.toUpperCase().trim() ||
-      name.slice(0, 4).toUpperCase()
+  const search = query.trim().toLowerCase()
+  const filtered = players.filter(
+    (player) =>
+      player.full_name.toLowerCase().includes(search) ||
+      player.code.toLowerCase().includes(search),
+  )
 
-    setIsAdding(true)
-    const { error } = await supabase.from("teams").insert({
-      name: name.trim(),
-      ticker: ticker,
-      starting_capital: 100000,
+  // Admins may register someone at any time, even after the game has started
+  const addPlayer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = event.currentTarget
+    const data = new FormData(form)
+    setSaving(true)
+    const { data: result, error } = await supabase.rpc("register_participant", {
+      p_full_name: String(data.get("fullName") || ""),
+      p_email: String(data.get("email") || ""),
+      p_phone: String(data.get("phone") || ""),
+      p_category: category,
+      p_study_year:
+        category === "guest" ? null : Number(data.get("studyYear")) || null,
+      p_school: category === "other_school" ? String(data.get("school") || "") : null,
+      p_student_number:
+        category === "guest" ? null : String(data.get("studentNumber") || ""),
     })
-    setIsAdding(false)
-    if (error) {
-      alert(`Error creating team: ${error.message}`)
-    } else {
-      await refetchData()
+    setSaving(false)
+    if (error || !result?.code) {
+      setNotice(`⚠️ Could not add player: ${error?.message || "unknown error"}`)
+      return
     }
+    form.reset()
+    setAdding(false)
+    setNotice(`Player added. Trader code: ${result.code}`)
+    await refetchData()
   }
 
-  const handleRemoveTeam = async (id: string, name: string) => {
-    if (gameStatus !== "setup") return
-    if (!confirm(`Are you sure you want to delete team "${name}"?`)) return
-    const { error } = await supabase.from("teams").delete().eq("id", id)
+  const removePlayer = async (player: Player) => {
+    if (
+      !confirm(
+        `Delete ${player.full_name} (${player.code})? Their transactions are deleted too.`,
+      )
+    )
+      return
+    const { error } = await supabase
+      .from("participants")
+      .delete()
+      .eq("id", player.id)
     if (error) {
-      alert(`Error removing team: ${error.message}`)
+      setNotice(`⚠️ Could not delete player: ${error.message}`)
     } else {
       await refetchData()
     }
@@ -2212,109 +2248,130 @@ function TeamsPanel({
 
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border border-gold/25 bg-gold/5 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3 className="flex items-center gap-2 font-display text-xl text-gold">
-              {gameStatus === "setup" && (
-                <>
-                  <Sparkles size={20} /> Random Syndicate Equalization
-                </>
-              )}
-              {gameStatus === "live" && (
-                <>
-                  <Activity size={20} /> Active Syndicate Session
-                </>
-              )}
-              {gameStatus === "ended" && (
-                <>
-                  <Trophy size={20} /> Final Syndicate Standings
-                </>
-              )}
-            </h3>
-            <p className="mt-2 max-w-2xl text-xs leading-relaxed text-white/60">
-              {gameStatus === "setup" &&
-                "Shuffles all registered participants randomly and assigns them into equal-sized teams. Teams are stacked in alphabetical order, score events are reset, and the leaderboard is unlocked."}
-              {gameStatus === "live" && "Game in progress. Teams are locked."}
-              {gameStatus === "ended" && "Final results. Scoring is locked."}
-            </p>
-          </div>
-          {gameStatus === "setup" && (
-            <Button onClick={createEqualTeams} disabled={loadingAction}>
-              <Sparkles size={15} />{" "}
-              {loadingAction ? "Distributing..." : "Create Equal Teams & Open Board"}
-            </Button>
-          )}
-          {gameStatus === "live" && (
-            <Button
-              variant="danger"
-              onClick={endGame}
-              disabled={loadingAction}
-            >
-              <LockKeyhole size={15} />{" "}
-              {loadingAction ? "Ending Game..." : "End Game"}
-            </Button>
-          )}
-          {gameStatus === "ended" && (
-            <button
-              disabled
-              className="btn btn-secondary opacity-60 cursor-not-allowed"
-            >
-              <Check size={15} /> Game Ended
-            </button>
-          )}
-        </div>
-      </div>
       <div className="admin-card">
-        <div className="mb-5 flex flex-wrap justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <label className="search-box">
             <Search size={15} />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search firms"
+              placeholder="Search name or code"
             />
           </label>
-          <Button
-            onClick={handleAddTeam}
-            disabled={isAdding || gameStatus !== "setup"}
-            className={gameStatus !== "setup" ? "opacity-50 cursor-not-allowed" : ""}
-          >
-            <Plus size={15} /> New team
+          <Button onClick={() => setAdding(!adding)}>
+            {adding ? <X size={15} /> : <Plus size={15} />}
+            {adding ? "Cancel" : "Add player"}
           </Button>
         </div>
-        <div className="divide-y divide-white/6">
-          {teams
-            .filter((t) => t.name.toLowerCase().includes(query.toLowerCase()))
-            .map((team) => (
-              <div
-                className="grid items-center gap-3 py-4 sm:grid-cols-[1fr_1fr_auto]"
-                key={team.id}
+        {adding && (
+          <form
+            onSubmit={addPlayer}
+            className="mt-5 grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-2"
+          >
+            <Field label="Full name" name="fullName" placeholder="Full name" />
+            <Field
+              label="Email"
+              name="email"
+              type="email"
+              placeholder="name@ensia.edu.dz"
+            />
+            <Field
+              label="Phone (optional)"
+              name="phone"
+              type="tel"
+              placeholder="0550 12 34 56"
+            />
+            <label className="field-label">
+              Category
+              <select
+                className="field-control"
+                value={category}
+                onChange={(e) =>
+                  setCategory(e.target.value as ParticipantCategory)
+                }
               >
-                <div>
-                  <p className="text-sm text-white">{team.name}</p>
-                  <p className="text-xs text-white/30">{team.ticker}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-white/25">
-                    Starting capital
+                <option value="ensia">ENSIA student</option>
+                <option value="other_school">Other school</option>
+                <option value="guest">Guest</option>
+              </select>
+            </label>
+            {category === "other_school" && (
+              <Field label="School" name="school" placeholder="School name" />
+            )}
+            {category !== "guest" && (
+              <>
+                <label className="field-label">
+                  Year of study
+                  <select
+                    className="field-control"
+                    name="studyYear"
+                    defaultValue=""
+                  >
+                    <option value="">
+                      {category === "ensia" ? "Select a year" : "Not specified"}
+                    </option>
+                    {[1, 2, 3, 4, 5].map((year) => (
+                      <option key={year} value={year}>
+                        Year {year}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Field
+                  label="Student number (if no school email)"
+                  name="studentNumber"
+                  placeholder="Student card number"
+                />
+              </>
+            )}
+            <div className="sm:col-span-2">
+              <Button type="submit" disabled={saving}>
+                <Check size={15} /> {saving ? "Adding..." : "Register player"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+      <div className="admin-card">
+        <p className="mb-3 text-xs text-white/35">
+          {filtered.length} of {players.length} players
+        </p>
+        <div className="divide-y divide-white/6">
+          {filtered.map((player) => {
+            const details = participants.find((p) => p.id === player.id)
+            return (
+              <div
+                className="grid items-center gap-3 py-3 sm:grid-cols-[1.2fr_1.2fr_auto_auto]"
+                key={player.id}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-white">
+                    {player.full_name}
                   </p>
-                  <p className="font-mono text-sm text-white/70">
-                    {formatMoney(team.starting_capital)}
+                  <p className="text-xs text-white/30">
+                    {playerSubtitle(player)}
                   </p>
                 </div>
-                <Button
-                  variant="danger"
-                  disabled={gameStatus !== "setup"}
-                  onClick={() => handleRemoveTeam(team.id, team.name)}
-                >
+                <div className="min-w-0 text-xs text-white/40">
+                  <p className="truncate">{details?.email}</p>
+                  <p className="truncate">
+                    {[details?.phone, details?.student_number]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+                <span className="font-mono text-sm text-white/80">
+                  {formatMoney(player.balance)}
+                </span>
+                <Button variant="danger" onClick={() => removePlayer(player)}>
                   Remove
                 </Button>
               </div>
-            ))}
-          {teams.length === 0 && (
+            )
+          })}
+          {filtered.length === 0 && (
             <p className="py-6 text-center text-sm text-white/30">
-              No teams available.
+              No players found.
             </p>
           )}
         </div>
@@ -2323,262 +2380,392 @@ function TeamsPanel({
   )
 }
 
-function MembersPanel({
-  teams,
-  participants,
-  refetchData,
-}: {
-  teams: Team[]
-  participants: Participant[]
-  refetchData: () => Promise<void>
-}) {
-  const handleRemoveMember = async (id: string, name: string) => {
-    if (!confirm(`Remove ${name} from this syndicate?`)) return
-    const { error } = await supabase
-      .from("participants")
-      .update({ team_id: null })
-      .eq("id", id)
+const QUICK_AMOUNTS = [300, 500, 1000, 1500, 2000]
 
-    if (error) {
-      alert(`Error updating participant: ${error.message}`)
-    } else {
-      await refetchData()
-    }
-  }
-
-  const handleAddParticipant = async (teamId: string) => {
-    const name = prompt("Enter participant full name:")
-    if (!name?.trim()) return
-    const email = prompt("Enter participant email:")
-    if (!email?.trim()) return
-
-    const { error } = await supabase.from("participants").insert({
-      full_name: name.trim(),
-      email: email.trim().toLowerCase(),
-      team_id: teamId,
-    })
-
-    if (error) {
-      alert(`Error adding participant: ${error.message}`)
-    } else {
-      await refetchData()
-    }
-  }
-
-  const unassigned = participants.filter((p) => !p.team_id)
-
-  return (
-    <div className="space-y-6">
-      {unassigned.length > 0 && (
-        <div className="admin-card border border-gold/20">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-gold flex items-center gap-2">
-              <Users size={16} /> Unassigned Participants ({unassigned.length})
-            </h2>
-            <span className="text-xs text-white/40">
-              Will be allocated when Equal Teams is run
-            </span>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {unassigned.map((member) => (
-              <span
-                key={member.id}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
-              >
-                {member.full_name}
-                {member.email && (
-                  <span className="text-white/30 text-[10px]">
-                    ({member.email})
-                  </span>
-                )}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="grid gap-4 md:grid-cols-2">
-        {teams.map((team) => (
-          <div className="admin-card" key={team.id}>
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-medium text-white">{team.name}</h2>
-                <p className="text-xs text-white/30">{team.ticker}</p>
-              </div>
-              <button
-                className="icon-button"
-                aria-label="Add member"
-                onClick={() => handleAddParticipant(team.id)}
-              >
-                <Plus size={15} />
-              </button>
-            </div>
-            <div className="mt-4 space-y-3">
-              {participants
-                .filter((p) => p.team_id === team.id)
-                .map((member) => (
-                  <div
-                    className="flex items-center justify-between"
-                    key={member.id}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="member-avatar size-8 text-[10px]">
-                        {member.full_name.charAt(0)}
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-sm text-white/65">
-                          {member.full_name}
-                        </span>
-                        {member.email && (
-                          <span className="text-[10px] text-white/30">
-                            {member.email}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      className="text-white/25 hover:text-loss transition"
-                      aria-label={`Remove ${member.full_name}`}
-                      onClick={() =>
-                        handleRemoveMember(member.id, member.full_name)
-                      }
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              {participants.filter((p) => p.team_id === team.id).length === 0 && (
-                <p className="text-xs text-white/30">No members in this syndicate.</p>
-              )}
-              <button
-                onClick={() => handleAddParticipant(team.id)}
-                className="flex items-center gap-2 text-xs text-gold hover:underline"
-              >
-                <Plus size={13} /> Add participant
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function ScoringPanel({
-  teams,
+function BankerPanel({
+  players,
   games,
-  events,
+  transactions,
   gameStatus,
-  onSubmit,
-  undo,
+  refetchData,
+  setNotice,
 }: {
-  teams: Team[]
+  players: Player[]
   games: Game[]
-  events: ScoreEvent[]
+  transactions: Transaction[]
   gameStatus: GameStatus
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  undo: () => void
+  refetchData: () => Promise<void>
+  setNotice: (notice: string) => void
 }) {
   const isLive = gameStatus === "live"
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [entry, setEntry] = useState("")
+  const [entryError, setEntryError] = useState("")
+  // null until the banker picks one; "" means "Other"
+  const [gameId, setGameId] = useState<string | null>(null)
+  const [direction, setDirection] = useState<1 | -1>(1)
+  const [amount, setAmount] = useState("")
+  const [note, setNote] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const activeGameId =
+    gameId ?? (games.find((g) => g.status === "live") ?? games[0])?.id ?? ""
+  const selected = selectedIds
+    .map((id) => players.find((player) => player.id === id))
+    .filter((player): player is Player => Boolean(player))
+
+  const tokensOf = (raw: string) => raw.split(/[\s,;]+/).filter(Boolean)
+  const looksLikeCodes = (raw: string) =>
+    tokensOf(raw).length > 0 &&
+    tokensOf(raw).every((token) => /^(ws-?)?\d+$/i.test(token))
+
+  const nameQuery = entry.trim().toLowerCase()
+  const suggestions =
+    nameQuery.length >= 2 && !looksLikeCodes(entry)
+      ? players
+          .filter(
+            (player) =>
+              !selectedIds.includes(player.id) &&
+              player.full_name.toLowerCase().includes(nameQuery),
+          )
+          .slice(0, 6)
+      : []
+
+  const addPlayer = (player: Player) => {
+    setSelectedIds((current) =>
+      current.includes(player.id) ? current : [...current, player.id],
+    )
+    setEntry("")
+    setEntryError("")
+  }
+
+  // Accepts one or several codes ("4821", "WS-4821 ws1234, 0077")
+  const addCodes = (raw: string) => {
+    const found: string[] = []
+    const missing: string[] = []
+    for (const token of tokensOf(raw)) {
+      const code = normalizeCode(token)
+      const player = code && players.find((p) => p.code === code)
+      if (player) found.push(player.id)
+      else missing.push(token)
+    }
+    setSelectedIds((current) => [...new Set([...current, ...found])])
+    setEntry(missing.join(" "))
+    setEntryError(
+      missing.length ? `No player with code ${missing.join(", ")}` : "",
+    )
+  }
+
+  const onEntryChange = (value: string) => {
+    setEntry(value)
+    setEntryError("")
+    // A complete code is added as soon as it is typed or pasted
+    if (looksLikeCodes(value) && tokensOf(value).every(normalizeCode)) {
+      const allKnown = tokensOf(value).every((token) =>
+        players.some((p) => p.code === normalizeCode(token)),
+      )
+      if (allKnown || /[\s,;]$/.test(value)) addCodes(value)
+    }
+  }
+
+  const onEntryEnter = () => {
+    if (looksLikeCodes(entry)) addCodes(entry)
+    else if (suggestions.length === 1) addPlayer(suggestions[0])
+  }
+
+  const submit = async () => {
+    const value = Math.round(Number(amount))
+    if (!selected.length) {
+      setEntryError("Add at least one player.")
+      return
+    }
+    if (!value || value <= 0) {
+      setNotice("⚠️ Enter an amount greater than zero.")
+      return
+    }
+    setSaving(true)
+    const batchId = crypto.randomUUID()
+    const { error } = await supabase.from("transactions").insert(
+      selected.map((player) => ({
+        participant_id: player.id,
+        game_id: activeGameId || null,
+        amount: direction * value,
+        note: note.trim() || null,
+        batch_id: batchId,
+      })),
+    )
+    setSaving(false)
+    if (error) {
+      setNotice(`⚠️ Failed to post: ${error.message}`)
+      return
+    }
+    setNotice(
+      `${formatSigned(direction * value)} posted to ${selected.length} player${
+        selected.length > 1 ? "s" : ""
+      }.`,
+    )
+    setSelectedIds([])
+    setEntry("")
+    setNote("")
+    await refetchData()
+  }
+
+  // Latest entries, one line per batch (a batch = one confirm click)
+  const batches = useMemo(() => {
+    const grouped = new Map<string, Transaction[]>()
+    for (const item of transactions) {
+      const key = item.batch_id ?? item.id
+      grouped.set(key, [...(grouped.get(key) ?? []), item])
+    }
+    return [...grouped.values()].slice(0, 8)
+  }, [transactions])
+
+  const undoBatch = async (batch: Transaction[]) => {
+    if (
+      !confirm(
+        `Undo ${formatSigned(Number(batch[0].amount))} for ${batch.length} player${
+          batch.length > 1 ? "s" : ""
+        }?`,
+      )
+    )
+      return
+    const request = supabase.from("transactions").delete()
+    const { error } = batch[0].batch_id
+      ? await request.eq("batch_id", batch[0].batch_id)
+      : await request.eq("id", batch[0].id)
+    if (error) {
+      setNotice(`⚠️ Failed to undo: ${error.message}`)
+    } else {
+      setNotice("Entry undone.")
+      await refetchData()
+    }
+  }
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_.65fr]">
-      <form onSubmit={onSubmit} className="admin-card">
+    <div className="grid gap-5 lg:grid-cols-[1fr_.75fr]">
+      <div className="admin-card">
         <h2 className="font-display text-xl text-white">Post a transaction</h2>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="field-label">
-            Team
-            <select className="field-control" name="team" required disabled={!isLive}>
-              {teams.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        {!isLive && (
+          <p className="mt-2 text-xs font-medium text-gold/90">
+            {gameStatus === "setup"
+              ? "Scoring opens when the game starts."
+              : "Scoring is locked because the game has ended."}
+          </p>
+        )}
+        <div className="mt-5 space-y-4">
           <label className="field-label">
             Game
-            <select className="field-control" name="game" disabled={!isLive}>
+            <select
+              className="field-control"
+              value={activeGameId}
+              onChange={(e) => setGameId(e.target.value)}
+              disabled={!isLive}
+            >
               {games.map((g) => (
                 <option value={g.id} key={g.id}>
                   {g.name}
                 </option>
               ))}
-              <option value="">Bonus round / Other</option>
+              <option value="">Other</option>
             </select>
           </label>
-          <label className="field-label">
-            Amount ($)
+
+          <div className="field-label">
+            Players
+            {selected.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selected.map((player) => (
+                  <span
+                    key={player.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10 py-1 pl-3 pr-1.5 text-xs text-white"
+                  >
+                    <span className="font-mono text-gold">{player.code}</span>
+                    {player.full_name}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${player.full_name}`}
+                      onClick={() =>
+                        setSelectedIds((current) =>
+                          current.filter((id) => id !== player.id),
+                        )
+                      }
+                      className="rounded-full p-0.5 text-white/40 hover:text-loss"
+                    >
+                      <X size={13} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               className="field-control"
-              name="amount"
-              type="number"
-              min="1"
-              required
-              placeholder="500"
+              value={entry}
+              onChange={(e) => onEntryChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  onEntryEnter()
+                }
+              }}
+              placeholder="Type a code (4821) or a name"
+              aria-label="Add player by code or name"
+              disabled={!isLive}
+            />
+            {entryError && <span className="field-error">{entryError}</span>}
+            {suggestions.length > 0 && (
+              <div className="mt-2 overflow-hidden rounded-xl border border-white/10">
+                {suggestions.map((player) => (
+                  <button
+                    type="button"
+                    key={player.id}
+                    onClick={() => addPlayer(player)}
+                    className="flex w-full items-center justify-between gap-3 border-b border-white/6 px-3 py-2 text-left text-sm text-white/80 last:border-0 hover:bg-gold/8"
+                  >
+                    <span className="truncate">{player.full_name}</span>
+                    <span className="font-mono text-xs text-gold">
+                      {player.code}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="field-label">
+            Amount ($)
+            <div className="mt-2 grid grid-cols-[auto_1fr] gap-2">
+              <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-white/10">
+                {(
+                  [
+                    [1, "+ Earn"],
+                    [-1, "− Lose"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    type="button"
+                    key={value}
+                    aria-pressed={direction === value}
+                    onClick={() => setDirection(value)}
+                    disabled={!isLive}
+                    className={`px-3 text-xs font-semibold transition ${
+                      direction === value
+                        ? value === 1
+                          ? "bg-gain/15 text-gain"
+                          : "bg-loss/15 text-loss"
+                        : "text-white/40 hover:text-white"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <input
+                className="field-control mt-0!"
+                type="number"
+                min="1"
+                inputMode="numeric"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="500"
+                aria-label="Amount"
+                disabled={!isLive}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {QUICK_AMOUNTS.map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  onClick={() => setAmount(String(value))}
+                  disabled={!isLive}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-xs text-white/60 transition hover:border-gold/40 hover:text-gold"
+                >
+                  {formatMoney(value)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="field-label">
+            Note (optional)
+            <input
+              className="field-control"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Top pitcher bonus"
               disabled={!isLive}
             />
           </label>
-          <label className="field-label">
-            Type
-            <select className="field-control" name="type" required disabled={!isLive}>
-              <option value="bonus">Bonus</option>
-              <option value="penalty">Penalty</option>
-            </select>
-          </label>
         </div>
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button type="submit" disabled={!isLive}>
-            <Check size={16} /> Confirm score
-          </Button>
-          {!isLive && (
-            <span className="text-xs text-gold/90 font-medium">
-              {gameStatus === "setup"
-                ? "Scoring opens when the game starts"
-                : "Scoring is locked"}
-            </span>
+        <Button
+          onClick={submit}
+          disabled={!isLive || saving}
+          className="mt-6 w-full justify-center py-3"
+        >
+          <Check size={16} />
+          {saving
+            ? "Posting..."
+            : selected.length && Number(amount) > 0
+              ? `Confirm ${formatSigned(direction * Math.round(Number(amount)))} × ${selected.length}`
+              : "Confirm"}
+        </Button>
+      </div>
+      <div className="admin-card">
+        <h2 className="font-display text-xl text-white">Latest entries</h2>
+        <div className="mt-4 divide-y divide-white/6">
+          {batches.map((batch) => {
+            const first = batch[0]
+            const batchAmount = Number(first.amount)
+            const names = batch.map(
+              (item) =>
+                players.find((p) => p.id === item.participant_id)?.full_name ||
+                "Unknown player",
+            )
+            return (
+              <div
+                className="flex items-start justify-between gap-3 py-3"
+                key={first.batch_id ?? first.id}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm text-white">
+                    <span
+                      className={`font-mono ${
+                        batchAmount < 0 ? "text-loss" : "text-gain"
+                      }`}
+                    >
+                      {formatSigned(batchAmount)}
+                    </span>
+                    {batch.length > 1 && (
+                      <span className="text-white/45"> × {batch.length}</span>
+                    )}
+                  </p>
+                  <p className="truncate text-xs text-white/45">
+                    {names.slice(0, 3).join(", ")}
+                    {names.length > 3 && ` +${names.length - 3} more`}
+                  </p>
+                  <p className="mt-0.5 text-xs text-white/25">
+                    {games.find((g) => g.id === first.game_id)?.name || "Other"}
+                    {first.note && ` · ${first.note}`} ·{" "}
+                    {new Date(first.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => undoBatch(batch)}
+                  disabled={!isLive}
+                >
+                  Undo
+                </Button>
+              </div>
+            )
+          })}
+          {batches.length === 0 && (
+            <p className="py-4 text-xs text-white/30">No transactions yet.</p>
           )}
         </div>
-      </form>
-      <div className="admin-card">
-        <h2 className="font-display text-xl text-white">Last action</h2>
-        {events[0] ? (
-          <div className="mt-5 rounded-xl border border-white/7 bg-white/2 p-4">
-            <p className="text-sm text-white">
-              {events[0].type === "penalty"
-                ? "Penalty applied"
-                : "Win bonus awarded"}
-            </p>
-            <p
-              className={`mt-2 font-mono text-xl ${
-                events[0].type === "penalty" ? "text-loss" : "text-gain"
-              }`}
-            >
-              {events[0].type === "penalty" ? "−" : "+"}
-              {formatMoney(events[0].amount)}
-            </p>
-            <p className="mt-1 text-xs text-white/25">
-              {new Date(events[0].created_at).toLocaleTimeString()}
-            </p>
-          </div>
-        ) : (
-          <p className="mt-5 text-xs text-white/30">No transactions yet.</p>
-        )}
-        <Button
-          variant="secondary"
-          onClick={undo}
-          disabled={!isLive || !events.length}
-          className="mt-4 w-full justify-center"
-        >
-          Undo last action
-        </Button>
-        {!isLive && (
-          <p className="mt-2 text-center text-xs text-white/40">
-            {gameStatus === "setup"
-              ? "Scoring opens when the game starts"
-              : "Scoring is locked"}
-          </p>
-        )}
       </div>
     </div>
   )
@@ -2591,6 +2778,30 @@ function GamesPanel({
   games: Game[]
   refetchData: () => Promise<void>
 }) {
+  const [name, setName] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const addGame = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) return
+    if (games.some((g) => g.name.toLowerCase() === trimmed.toLowerCase())) {
+      alert("A game with this name already exists.")
+      return
+    }
+    setSaving(true)
+    const { error } = await supabase
+      .from("games")
+      .insert({ name: trimmed, status: "upcoming" })
+    setSaving(false)
+    if (error) {
+      alert(`Error adding game: ${error.message}`)
+    } else {
+      setName("")
+      await refetchData()
+    }
+  }
+
   const updateStatus = async (gameId: string, status: Game["status"]) => {
     const { error } = await supabase
       .from("games")
@@ -2604,49 +2815,104 @@ function GamesPanel({
     }
   }
 
+  const removeGame = async (game: Game) => {
+    if (
+      !confirm(
+        `Delete "${game.name}"? Money already awarded for it is kept and shown as "Other".`,
+      )
+    )
+      return
+    const { error } = await supabase.from("games").delete().eq("id", game.id)
+    if (error) {
+      alert(`Error deleting game: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {games.map((game) => (
-        <div className="admin-card" key={game.id}>
-          <div className="flex items-start justify-between">
-            <div className="icon-box">
-              <Gamepad2 size={18} />
-            </div>
-            <select
-              value={game.status}
-              onChange={(e) =>
-                updateStatus(game.id, e.target.value as Game["status"])
-              }
-              className="status-select"
-            >
-              <option value="upcoming">Upcoming</option>
-              <option value="live">Live</option>
-              <option value="done">Done</option>
-            </select>
-          </div>
-          <h2 className="mt-5 font-display text-xl text-white">{game.name}</h2>
-          <p className="mt-1 text-sm text-white/35">
-            {game.weight}× score multiplier
-          </p>
+    <div className="space-y-5">
+      <form onSubmit={addGame} className="admin-card">
+        <h2 className="font-display text-xl text-white">Add a game</h2>
+        <p className="mt-1 text-xs text-white/35">
+          For example a department station. It appears in the banker's game
+          list right away.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <input
+            className="field-control mt-0! min-w-0 flex-1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Station: Design"
+            aria-label="Game name"
+          />
+          <Button type="submit" disabled={saving || !name.trim()}>
+            <Plus size={15} /> {saving ? "Adding..." : "Add game"}
+          </Button>
         </div>
-      ))}
+      </form>
+      <div className="grid gap-4 md:grid-cols-2">
+        {games.map((game) => (
+          <div className="admin-card" key={game.id}>
+            <div className="flex items-start justify-between">
+              <div className="icon-box">
+                <Gamepad2 size={18} />
+              </div>
+              <select
+                value={game.status}
+                onChange={(e) =>
+                  updateStatus(game.id, e.target.value as Game["status"])
+                }
+                className="status-select"
+              >
+                <option value="upcoming">Upcoming</option>
+                <option value="live">Live</option>
+                <option value="done">Done</option>
+              </select>
+            </div>
+            <div className="mt-5 flex items-end justify-between gap-3">
+              <h2 className="font-display text-xl text-white">{game.name}</h2>
+              <Button variant="danger" onClick={() => removeGame(game)}>
+                Delete
+              </Button>
+            </div>
+          </div>
+        ))}
+        {games.length === 0 && (
+          <p className="text-sm text-white/30">No games yet.</p>
+        )}
+      </div>
     </div>
   )
 }
 
 function ActivityPanel({
-  events,
-  teams,
+  transactions,
+  players,
+  games,
 }: {
-  events: ScoreEvent[]
-  teams: Team[]
+  transactions: Transaction[]
+  players: Player[]
+  games: Game[]
 }) {
+  const playerOf = (item: Transaction) =>
+    players.find((p) => p.id === item.participant_id)
+  const gameOf = (item: Transaction) =>
+    games.find((g) => g.id === item.game_id)?.name || "Other"
+
   const exportCsv = () => {
+    const quote = (value: string) => `"${value.replace(/"/g, '""')}"`
     const csv = [
-      "team,type,amount,time",
-      ...events.map(
-        (e) =>
-          `"${teams.find((t) => t.id === e.team_id)?.name || "Unknown"}",${e.type},${e.amount},${e.created_at}`,
+      "time,code,player,game,note,amount",
+      ...transactions.map((item) =>
+        [
+          item.created_at,
+          playerOf(item)?.code || "",
+          quote(playerOf(item)?.full_name || "Unknown"),
+          quote(gameOf(item)),
+          quote(item.note || ""),
+          item.amount,
+        ].join(","),
       ),
     ].join("\n")
     const link = document.createElement("a")
@@ -2660,12 +2926,14 @@ function ActivityPanel({
       <div className="mb-5 flex items-center justify-between">
         <div>
           <h2 className="font-display text-xl text-white">Audit trail</h2>
-          <p className="text-xs text-white/30">All score events</p>
+          <p className="text-xs text-white/30">
+            Latest {transactions.length} transactions
+          </p>
         </div>
         <Button
           variant="secondary"
           onClick={exportCsv}
-          disabled={!events.length}
+          disabled={!transactions.length}
         >
           <Download size={15} /> Export CSV
         </Button>
@@ -2675,42 +2943,49 @@ function ActivityPanel({
           <thead className="border-b border-white/8 text-[10px] uppercase tracking-widest text-white/30">
             <tr>
               <th className="py-3">Time</th>
-              <th>Team</th>
-              <th>Type</th>
+              <th>Player</th>
+              <th>Game</th>
               <th className="text-right">Amount</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/6">
-            {events.map((event) => (
-              <tr key={event.id}>
-                <td className="py-4 text-white/35">
-                  {new Date(event.created_at).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </td>
-                <td className="text-white">
-                  {teams.find((t) => t.id === event.team_id)?.name || "Unknown Firm"}
-                </td>
-                <td>
-                  <span className="rounded-full bg-white/5 px-2 py-1 text-xs capitalize text-white/50">
-                    {event.type}
-                  </span>
-                </td>
-                <td
-                  className={`text-right font-mono ${
-                    event.type === "penalty" ? "text-loss" : "text-gain"
-                  }`}
-                >
-                  {event.type === "penalty" ? "−" : "+"}
-                  {formatMoney(event.amount)}
-                </td>
-              </tr>
-            ))}
-            {events.length === 0 && (
+            {transactions.map((item) => {
+              const amount = Number(item.amount)
+              const player = playerOf(item)
+              return (
+                <tr key={item.id}>
+                  <td className="py-4 text-white/35">
+                    {new Date(item.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </td>
+                  <td className="text-white">
+                    {player?.full_name || "Unknown player"}
+                    <span className="ml-2 font-mono text-xs text-white/30">
+                      {player?.code}
+                    </span>
+                  </td>
+                  <td className="text-white/50">
+                    {gameOf(item)}
+                    {item.note && (
+                      <span className="text-white/30"> · {item.note}</span>
+                    )}
+                  </td>
+                  <td
+                    className={`text-right font-mono ${
+                      amount < 0 ? "text-loss" : "text-gain"
+                    }`}
+                  >
+                    {formatSigned(amount)}
+                  </td>
+                </tr>
+              )
+            })}
+            {transactions.length === 0 && (
               <tr>
                 <td colSpan={4} className="py-8 text-center text-xs text-white/30">
-                  No score events recorded yet.
+                  No transactions recorded yet.
                 </td>
               </tr>
             )}
@@ -2756,13 +3031,20 @@ function Footer({ navigate }: { navigate: (page: Page) => void }) {
   )
 }
 
+// "/portfolio/WS-4821" -> "WS-4821"
+const codeFromPath = (): string | null =>
+  normalizeCode(window.location.pathname.split("/")[2] ?? "")
+
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromPath)
-  const [rawTeams, setRawTeams] = useState<Team[]>([])
-  const [events, setEvents] = useState<ScoreEvent[]>([])
+  const [selectedCode, setSelectedCode] = useState<string | null>(codeFromPath)
+  const [balances, setBalances] = useState<PlayerBalance[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
   const [games, setGames] = useState<Game[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+  const [startingCapital, setStartingCapital] = useState(
+    DEFAULT_STARTING_CAPITAL,
+  )
   const [isLeaderboardAccessible, setIsLeaderboardAccessible] =
     useState<boolean>(false)
   const [gameStatus, setGameStatus] = useState<GameStatus>("setup")
@@ -2770,10 +3052,34 @@ export default function App() {
     () => new Date(DEFAULT_REGISTRATION_OPENS_AT),
   )
   const [, setLoadingInitial] = useState(true)
+  const refetchTimer = useRef<number | null>(null)
+  // The player registered on this phone, if any
+  const [registration, setRegistration] = useState(loadRegistration)
+
+  // Forget a saved registration whose player no longer exists (deleted by an
+  // admin). Only a successful "not found" clears it, never a failed request.
+  useEffect(() => {
+    const saved = loadRegistration()
+    if (!saved) return
+    supabase
+      .from("player_balances")
+      .select("id")
+      .eq("id", saved.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && !data) {
+          clearRegistration()
+          setRegistration(null)
+        }
+      })
+  }, [])
 
   // Navigation sync with browser history
   useEffect(() => {
-    const onPop = () => setPage(pageFromPath())
+    const onPop = () => {
+      setPage(pageFromPath())
+      setSelectedCode(codeFromPath())
+    }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
   }, [])
@@ -2781,37 +3087,28 @@ export default function App() {
   // Fetch all Supabase data
   const fetchData = async () => {
     try {
-      const [
-        teamsRes,
-        eventsRes,
-        gamesRes,
-        participantsRes,
-        settingsRes,
-      ] = await Promise.all([
-        supabase.from("teams").select("*").order("name"),
-        supabase
-          .from("score_events")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        supabase.from("games").select("*").order("created_at"),
-        supabase.from("participants").select("*"),
-        // select("*") so this still works before registration_opens_at exists
-        supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
-      ])
+      const [balancesRes, transactionsRes, gamesRes, participantsRes, settingsRes] =
+        await Promise.all([
+          supabase.from("player_balances").select("*"),
+          // Latest movements only; balances come from the view above
+          supabase
+            .from("transactions")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .limit(300),
+          supabase.from("games").select("*").order("created_at"),
+          // Emails and phones are only readable (and needed) by admins
+          pageFromPath() === "admin"
+            ? supabase.from("participants").select("*")
+            : Promise.resolve({ data: null }),
+          // select("*") so this still works before registration_opens_at exists
+          supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
+        ])
 
-      if (teamsRes.data) setRawTeams(teamsRes.data)
-      if (eventsRes.data) setEvents(eventsRes.data)
+      if (balancesRes.data) setBalances(balancesRes.data)
+      if (transactionsRes.data) setTransactions(transactionsRes.data)
       if (gamesRes.data) setGames(gamesRes.data)
-
-      if (participantsRes.data) {
-        setParticipants(participantsRes.data)
-      } else if (participantsRes.error) {
-        // If RLS restricted emails for anon, fallback to public view
-        const { data: pubPart } = await supabase
-          .from("public_participants")
-          .select("*")
-        if (pubPart) setParticipants(pubPart)
-      }
+      if (participantsRes.data) setParticipants(participantsRes.data)
 
       if (settingsRes.data) {
         setIsLeaderboardAccessible(
@@ -2824,6 +3121,9 @@ export default function App() {
           setRegistrationOpensAt(
             new Date(settingsRes.data.registration_opens_at),
           )
+        }
+        if (settingsRes.data.starting_capital) {
+          setStartingCapital(Number(settingsRes.data.starting_capital))
         }
       }
     } catch (err) {
@@ -2838,37 +3138,30 @@ export default function App() {
     fetchData()
   }, [])
 
-  // Realtime subscription on score_events, teams, participants, games, settings
+  // Realtime subscription on transactions, participants, games, settings.
+  // A banker entry for a group arrives as several events, so refetch once.
   useEffect(() => {
+    const scheduleRefetch = () => {
+      if (refetchTimer.current) window.clearTimeout(refetchTimer.current)
+      refetchTimer.current = window.setTimeout(fetchData, 400)
+    }
+
     const channel = supabase
       .channel("schema-db-changes")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "score_events" },
-        () => {
-          fetchData()
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "teams" },
-        () => {
-          fetchData()
-        },
+        { event: "*", schema: "public", table: "transactions" },
+        scheduleRefetch,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "participants" },
-        () => {
-          fetchData()
-        },
+        scheduleRefetch,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "games" },
-        () => {
-          fetchData()
-        },
+        scheduleRefetch,
       )
       .on(
         "postgres_changes",
@@ -2892,93 +3185,44 @@ export default function App() {
               )
             }
           }
-          fetchData()
+          scheduleRefetch()
         },
       )
       .subscribe()
 
     return () => {
+      if (refetchTimer.current) window.clearTimeout(refetchTimer.current)
       supabase.removeChannel(channel)
     }
   }, [])
 
   const navigate = (next: Page) => {
     window.history.pushState({}, "", paths[next])
+    setSelectedCode(null)
     setPage(next)
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  const openTeam = (team: Team) => {
-    setSelectedTeam(team)
-    navigate("team")
+  const openPlayer = (player: Player) => {
+    window.history.pushState({}, "", `${paths.portfolio}/${player.code}`)
+    setSelectedCode(player.code)
+    setPage("portfolio")
+    window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  // Build full enriched teams with netWorth, member count, history, and change
-  const enrichedTeams = useMemo(() => {
-    const alphabetical = [...rawTeams].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )
+  // Ranked players, richest first
+  const players = useMemo(
+    () => rankPlayers(balances, startingCapital),
+    [balances, startingCapital],
+  )
 
-    return rawTeams.map((team) => {
-      const netWorth = calculateNetWorth(team, events)
-      const memberCount = participants.filter(
-        (p) => p.team_id === team.id,
-      ).length
+  const myId = registration?.id ?? null
 
-      const starting = Number(team.starting_capital) || 100000
-      const change =
-        starting > 0
-          ? Number((((netWorth - starting) / starting) * 100).toFixed(2))
-          : 0
-
-      // Reconstruct progressive history for chart
-      const teamEventsAsc = events
-        .filter((e) => e.team_id === team.id)
-        .slice()
-        .reverse()
-
-      let running = starting
-      const history = [100]
-      for (const ev of teamEventsAsc) {
-        running += ev.type === "penalty" ? -Number(ev.amount) : Number(ev.amount)
-        history.push(Math.round((running / starting) * 100))
-      }
-      if (history.length === 1) history.push(100)
-
-      const initialRank =
-        alphabetical.findIndex((t) => t.id === team.id) + 1 || 1
-
-      return {
-        ...team,
-        members: memberCount,
-        netWorth,
-        change,
-        history,
-        initialRank,
-        lastAction: getLastAction(team.id, events).text,
-      }
-    })
-  }, [rawTeams, events, participants])
-
-  // Ranked teams by Net Worth descending
-  const rankedTeams = useMemo(() => {
-    return [...enrichedTeams].sort((a, b) => {
-      if (b.netWorth !== a.netWorth) {
-        return (b.netWorth ?? 0) - (a.netWorth ?? 0)
-      }
-      return a.name.localeCompare(b.name)
-    })
-  }, [enrichedTeams])
-
-  // Sync selectedTeam with latest enriched data
-  const currentSelectedTeam = useMemo(() => {
-    if (selectedTeam) {
-      return (
-        enrichedTeams.find((t) => t.id === selectedTeam.id) || selectedTeam
-      )
-    }
-    return enrichedTeams[0] || null
-  }, [selectedTeam, enrichedTeams])
+  // Portfolio shows the player in the URL, otherwise this phone's player
+  const shownPlayer =
+    (selectedCode
+      ? players.find((player) => player.code === selectedCode)
+      : players.find((player) => player.id === myId)) ?? null
 
   return (
     <div className="min-h-screen bg-ink text-white">
@@ -2989,9 +3233,8 @@ export default function App() {
       {page === "home" && (
         <Landing
           navigate={navigate}
-          teams={rankedTeams}
-          events={events}
-          openTeam={openTeam}
+          players={players}
+          transactions={transactions}
         />
       )}
       {page === "register" && (
@@ -3000,31 +3243,37 @@ export default function App() {
           onRegistered={fetchData}
           opensAt={registrationOpensAt}
           gameStatus={gameStatus}
+          registration={registration}
+          setRegistration={setRegistration}
         />
       )}
-      {/* The Portfolio (team) page shares the leaderboard lock */}
+      {/* The Portfolio page shares the leaderboard lock */}
       {(page === "leaderboard" ||
-        (page === "team" && !isLeaderboardAccessible)) && (
+        (page === "portfolio" && !isLeaderboardAccessible)) && (
         <Leaderboard
-          teams={rankedTeams}
-          events={events}
-          openTeam={openTeam}
+          players={players}
+          transactions={transactions}
+          openPlayer={openPlayer}
           isAccessible={isLeaderboardAccessible}
           gameStatus={gameStatus}
           navigate={navigate}
+          myId={myId}
         />
       )}
-      {page === "team" && isLeaderboardAccessible && (
-        <TeamPage
-          team={currentSelectedTeam}
-          participants={participants}
-          events={events}
+      {page === "portfolio" && isLeaderboardAccessible && (
+        <PlayerPage
+          player={shownPlayer}
+          totalPlayers={players.length}
+          startingCapital={startingCapital}
+          games={games}
+          isMe={shownPlayer !== null && shownPlayer.id === myId}
+          navigate={navigate}
         />
       )}
       {page === "admin" && (
         <Admin
-          teams={rankedTeams}
-          events={events}
+          players={players}
+          transactions={transactions}
           games={games}
           participants={participants}
           isLeaderboardAccessible={isLeaderboardAccessible}
