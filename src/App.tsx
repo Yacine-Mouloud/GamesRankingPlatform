@@ -3002,7 +3002,9 @@ export default function App() {
           gameStatus={gameStatus}
         />
       )}
-      {page === "leaderboard" && (
+      {/* The Portfolio (team) page shares the leaderboard lock */}
+      {(page === "leaderboard" ||
+        (page === "team" && !isLeaderboardAccessible)) && (
         <Leaderboard
           teams={rankedTeams}
           events={events}
@@ -3012,7 +3014,7 @@ export default function App() {
           navigate={navigate}
         />
       )}
-      {page === "team" && (
+      {page === "team" && isLeaderboardAccessible && (
         <TeamPage
           team={currentSelectedTeam}
           participants={participants}
