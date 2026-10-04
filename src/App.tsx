@@ -24,6 +24,8 @@ import {
   LogOut,
   Menu,
   Plus,
+  Printer,
+  QrCode,
   Search,
   ShieldCheck,
   Sparkles,
@@ -33,6 +35,7 @@ import {
   Users,
   X,
 } from "lucide-react"
+import QRCode from "qrcode"
 import logo from "./imports/ebecLogo.jpg"
 import { supabase } from "./utils/supabase"
 import {
@@ -67,6 +70,7 @@ type AdminTab =
   | "scoring"
   | "games"
   | "activity"
+  | "poster"
 
 const pageFromPath = (): Page => {
   const path = window.location.pathname
@@ -2114,6 +2118,7 @@ function Admin({
             {tab === "games" && (
               <GamesPanel games={games} refetchData={refetchData} />
             )}
+            {tab === "poster" && <PosterPanel />}
             {tab === "activity" && (
               <ActivityPanel
                 transactions={transactions}
@@ -2239,6 +2244,7 @@ const adminItems: [AdminTab, typeof BarChart3][] = [
   ["scoring", CircleDollarSign],
   ["games", Gamepad2],
   ["activity", Activity],
+  ["poster", QrCode],
 ]
 
 function AdminNav({
@@ -3404,6 +3410,83 @@ function GroupsPanel({
             No groups yet. Create a round above when a game needs groups.
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+// Printable QR code that sends students to the register / check-in page
+function PosterPanel() {
+  const [url, setUrl] = useState(`${window.location.origin}${paths.register}`)
+
+  // Drawn locally as one SVG path: a square per dark module
+  const qr = useMemo(() => {
+    try {
+      const { modules } = QRCode.create(url.trim() || " ", {
+        errorCorrectionLevel: "M",
+      })
+      let path = ""
+      for (let row = 0; row < modules.size; row++) {
+        for (let col = 0; col < modules.size; col++) {
+          if (modules.get(row, col)) path += `M${col} ${row}h1v1h-1z`
+        }
+      }
+      return { size: modules.size, path }
+    } catch {
+      return null
+    }
+  }, [url])
+
+  return (
+    <div className="space-y-5">
+      <div className="admin-card print:hidden">
+        <h2 className="font-display text-xl text-white">Entrance QR code</h2>
+        <p className="mt-1 text-xs text-white/35">
+          Students scan it to register or to tap "I'm here". Check that the
+          link is the public site address before printing.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <input
+            className="field-control mt-0! min-w-0 flex-1"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            aria-label="Link encoded in the QR code"
+          />
+          <Button onClick={() => window.print()} disabled={!qr}>
+            <Printer size={15} /> Print poster
+          </Button>
+        </div>
+      </div>
+      <div className="print-area mx-auto flex max-w-xl flex-col items-center rounded-3xl bg-white p-10 text-center text-ink">
+        <img src={logo} alt="EBEC" className="size-16 rounded-xl object-cover" />
+        <p className="mt-4 text-xs font-semibold uppercase tracking-[0.3em] text-ink/50">
+          EBEC Open Day
+        </p>
+        <h2 className="mt-2 font-display text-4xl font-semibold">
+          Wall Street Night
+        </h2>
+        <p className="mt-3 text-lg font-medium">Scan to join the market</p>
+        {qr ? (
+          <svg
+            viewBox={`-2 -2 ${qr.size + 4} ${qr.size + 4}`}
+            className="mt-6 w-full max-w-sm"
+            shapeRendering="crispEdges"
+            role="img"
+            aria-label={`QR code for ${url}`}
+          >
+            <path d={qr.path} fill="#071426" />
+          </svg>
+        ) : (
+          <p className="mt-6 text-sm text-loss">
+            This link is too long for a QR code.
+          </p>
+        )}
+        <ol className="mt-6 space-y-1 text-left text-sm text-ink/70">
+          <li>1. Scan the code with your phone camera</li>
+          <li>2. Register, or tap "I'm here" if you already did</li>
+          <li>3. Keep your trader code: you need it at every game</li>
+        </ol>
+        <p className="mt-5 break-all font-mono text-xs text-ink/45">{url}</p>
       </div>
     </div>
   )
