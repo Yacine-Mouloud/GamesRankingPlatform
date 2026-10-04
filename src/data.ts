@@ -47,7 +47,27 @@ export interface PlayerBalance {
   last_transaction_at: string | null
   category: ParticipantCategory
   school: string | null
+  // Set once the player confirmed they are in the room ("I'm here")
+  checked_in_at?: string | null
 }
+
+// One player's place in a round; half is A/B when groups were split in two
+export interface GroupMember {
+  round_id: string
+  participant_id: string
+  group_number: number
+  half: "A" | "B" | null
+}
+
+// A round is one grouping of the room; the latest one is the current round
+export interface GroupRound {
+  id: string
+  name: string
+  created_at: string
+  group_members: GroupMember[]
+}
+
+export type GroupAssignment = Omit<GroupMember, "round_id">
 
 // A player as shown on the leaderboard: balance row + rank and change
 export interface Player extends PlayerBalance {
@@ -67,6 +87,9 @@ export interface Settings {
 
 // Used until settings.registration_opens_at is available, supposed as monday
 export const DEFAULT_REGISTRATION_OPENS_AT = "2026-10-05T00:00:00+01:00"
+
+// Used until settings.checkin_opens_at is loaded: start of the event
+export const DEFAULT_CHECKIN_OPENS_AT = "2026-10-07T17:00:00+01:00"
 
 // Used until settings.starting_capital is loaded
 export const DEFAULT_STARTING_CAPITAL = 10000
@@ -145,4 +168,70 @@ export function getLastAction(
     text: formatSigned(Number(latest.amount)),
     type: Number(latest.amount) < 0 ? "penalty" : "bonus",
   }
+}
+
+// "3" or "3A"
+export const groupLabel = (member: Pick<GroupMember, "group_number" | "half">) =>
+  `${member.group_number}${member.half ?? ""}`
+
+function shuffle<T>(items: T[]): T[] {
+  const result = [...items]
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
+  }
+  return result
+}
+
+// Players ordered year by year (then other schools, then guests), shuffled
+// inside each bucket. Dealing this list out one by one gives every group an
+// even share of each year.
+function mixOrder(players: PlayerBalance[]): PlayerBalance[] {
+  const bucketOf = (player: PlayerBalance) =>
+    player.category === "guest"
+      ? 7
+      : player.category === "other_school"
+        ? 6
+        : (player.study_year ?? 0)
+  const buckets = new Map<number, PlayerBalance[]>()
+  for (const player of players) {
+    const key = bucketOf(player)
+    buckets.set(key, [...(buckets.get(key) ?? []), player])
+  }
+  return [...buckets.keys()]
+    .sort((a, b) => a - b)
+    .flatMap((key) => shuffle(buckets.get(key) ?? []))
+}
+
+// Random groups whose sizes differ by at most one, with years mixed
+export function makeGroups(
+  players: PlayerBalance[],
+  groupCount: number,
+): GroupAssignment[] {
+  const count = Math.max(1, Math.min(Math.floor(groupCount), players.length))
+  return mixOrder(players).map((player, index) => ({
+    participant_id: player.id,
+    group_number: (index % count) + 1,
+    half: null,
+  }))
+}
+
+// Splits every group into two teams (A and B), keeping years mixed
+export function splitGroups(
+  members: GroupAssignment[],
+  players: PlayerBalance[],
+): GroupAssignment[] {
+  const numbers = [...new Set(members.map((m) => m.group_number))]
+  return numbers.flatMap((groupNumber) => {
+    const ids = members
+      .filter((m) => m.group_number === groupNumber)
+      .map((m) => m.participant_id)
+    return mixOrder(players.filter((p) => ids.includes(p.id))).map(
+      (player, index) => ({
+        participant_id: player.id,
+        group_number: groupNumber,
+        half: index % 2 === 0 ? ("A" as const) : ("B" as const),
+      }),
+    )
+  })
 }

@@ -36,10 +36,13 @@ import {
 import logo from "./imports/ebecLogo.jpg"
 import { supabase } from "./utils/supabase"
 import {
+  DEFAULT_CHECKIN_OPENS_AT,
   DEFAULT_REGISTRATION_OPENS_AT,
   DEFAULT_STARTING_CAPITAL,
   Game,
   GameStatus,
+  GroupAssignment,
+  GroupRound,
   Participant,
   ParticipantCategory,
   Player, // instead of team approach
@@ -48,13 +51,22 @@ import {
   formatMoney,
   formatSigned,
   getLastAction,
+  groupLabel,
+  makeGroups,
   normalizeCode,
   playerSubtitle,
   rankPlayers,
+  splitGroups,
 } from "./data"
 
 type Page = "home" | "register" | "leaderboard" | "portfolio" | "admin"
-type AdminTab = "overview" | "players" | "scoring" | "games" | "activity"
+type AdminTab =
+  | "overview"
+  | "players"
+  | "groups"
+  | "scoring"
+  | "games"
+  | "activity"
 
 const pageFromPath = (): Page => {
   const path = window.location.pathname
@@ -707,22 +719,126 @@ function clearRegistration() {
   }
 }
 
+// The student's own group (or team, once groups were split) in the current round
+function MyGroupCard({
+  round,
+  players,
+  myId,
+  className = "",
+}: {
+  round: GroupRound | null
+  players: Player[]
+  myId: string | null
+  className?: string
+}) {
+  const mine = round?.group_members.find((m) => m.participant_id === myId)
+  if (!round || !mine) return null
+  const mates = round.group_members
+    .filter((m) => m.group_number === mine.group_number && m.half === mine.half)
+    .map((m) => players.find((p) => p.id === m.participant_id))
+    .filter((player): player is Player => Boolean(player))
+
+  return (
+    <div
+      className={`rounded-2xl border border-gold/25 bg-gold/5 p-5 text-left ${className}`}
+    >
+      <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+        {round.name}
+      </p>
+      <p className="mt-1 font-display text-2xl text-white">
+        You're in {mine.half ? "Team" : "Group"}{" "}
+        <span className="text-gold">{groupLabel(mine)}</span>
+      </p>
+      <ul className="mt-3 space-y-1 text-sm text-white/65">
+        {mates.map((player) => (
+          <li key={player.id}>
+            {player.full_name}
+            {player.id === myId && <span className="text-gold"> (you)</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// Check-in from a phone that did not do the registration: find the player by
+// trader code or email, mark them present and remember them on this phone
+function CheckInLookup({
+  onFound,
+}: {
+  onFound: (registration: SavedRegistration) => void
+}) {
+  const [identifier, setIdentifier] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!identifier.trim()) return
+    setLoading(true)
+    setError("")
+    const { data, error: rpcError } = await supabase.rpc("check_in", {
+      p_identifier: identifier.trim(),
+    })
+    setLoading(false)
+    if (rpcError || !data?.id) {
+      setError(rpcError?.message || "Check-in failed. Please try again.")
+      return
+    }
+    onFound({ id: data.id, code: data.code, name: data.name })
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mt-8 rounded-2xl border border-white/10 bg-ink/40 p-5"
+    >
+      <p className="text-sm font-medium text-white">Already registered?</p>
+      <p className="mt-1 text-xs text-white/40">
+        Enter your trader code or the email you registered with to check in.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <input
+          className="field-control mt-0! min-w-0 flex-1"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="WS-4821 or your email"
+          aria-label="Trader code or email"
+          disabled={loading}
+        />
+        <Button type="submit" variant="secondary" disabled={loading}>
+          {loading ? "Checking..." : "I'm here"}
+        </Button>
+      </div>
+      {error && <span className="field-error">{error}</span>}
+    </form>
+  )
+}
+
 function Registration({
   navigate,
   onRegistered,
   opensAt,
+  checkinOpensAt,
   gameStatus,
   registration,
   setRegistration,
+  players,
+  currentRound,
 }: {
   navigate: (page: Page) => void
   onRegistered?: () => void
   opensAt: Date
+  checkinOpensAt: Date
   gameStatus: GameStatus
   registration: SavedRegistration | null
   setRegistration: (registration: SavedRegistration | null) => void
+  players: Player[]
+  currentRound: GroupRound | null
 }) {
   const [justRegistered, setJustRegistered] = useState(false)
+  const [checkingIn, setCheckingIn] = useState(false)
+  const [checkinError, setCheckinError] = useState("")
   const [category, setCategory] = useState<ParticipantCategory>("ensia")
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -734,6 +850,26 @@ function Registration({
       : now < opensAt.getTime()
         ? "upcoming"
         : "open"
+
+  // From the start of the event, students confirm they are in the room
+  const checkinOpen =
+    gameStatus !== "ended" && now >= checkinOpensAt.getTime()
+  const me = players.find((player) => player.id === registration?.id)
+
+  const checkIn = async () => {
+    if (!registration) return
+    setCheckingIn(true)
+    setCheckinError("")
+    const { error } = await supabase.rpc("check_in", {
+      p_participant_id: registration.id,
+    })
+    setCheckingIn(false)
+    if (error) {
+      setCheckinError(error.message)
+    } else if (onRegistered) {
+      onRegistered()
+    }
+  }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1018,6 +1154,40 @@ function Registration({
                       account. Take a screenshot.
                     </p>
                   </div>
+                  {!checkinOpen ? (
+                    <p className="mt-5 max-w-xs text-xs leading-relaxed text-white/45">
+                      On{" "}
+                      {checkinOpensAt.toLocaleDateString("en-US", {
+                        month: "long",
+                        day: "numeric",
+                      })}
+                      , scan the QR code at the entrance and tap "I'm here" to
+                      join the games.
+                    </p>
+                  ) : me?.checked_in_at ? (
+                    <p className="mt-5 inline-flex items-center gap-2 rounded-full border border-gain/30 bg-gain/10 px-4 py-2 text-sm font-semibold text-gain">
+                      <Check size={15} /> You're checked in
+                    </p>
+                  ) : me ? (
+                    <>
+                      <Button
+                        onClick={checkIn}
+                        disabled={checkingIn}
+                        className="mt-5 w-full max-w-xs justify-center py-3.5 text-base"
+                      >
+                        {checkingIn ? "Checking in..." : "I'm here"}
+                      </Button>
+                      {checkinError && (
+                        <p className="mt-2 text-xs text-loss">{checkinError}</p>
+                      )}
+                    </>
+                  ) : null}
+                  <MyGroupCard
+                    round={currentRound}
+                    players={players}
+                    myId={registration?.id ?? null}
+                    className="mt-5 w-full max-w-xs"
+                  />
                   <Button
                     onClick={() => navigate("leaderboard")}
                     className="mt-7"
@@ -1038,6 +1208,15 @@ function Registration({
                 </motion.div>
               )}
             </AnimatePresence>
+            {!submitted && checkinOpen && (
+              <CheckInLookup
+                onFound={(found) => {
+                  saveRegistration(found)
+                  setRegistration(found)
+                  if (onRegistered) onRegistered()
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1108,6 +1287,7 @@ function Leaderboard({
   gameStatus = "setup",
   navigate,
   myId,
+  currentRound,
 }: {
   players: Player[]
   transactions: Transaction[]
@@ -1116,6 +1296,7 @@ function Leaderboard({
   gameStatus?: GameStatus
   navigate: (page: Page) => void
   myId: string | null
+  currentRound: GroupRound | null
 }) {
   const [query, setQuery] = useState("")
 
@@ -1155,6 +1336,9 @@ function Leaderboard({
       player.code.toLowerCase().includes(search),
   )
   const me = myId ? players.find((player) => player.id === myId) : undefined
+  const myGroup = currentRound?.group_members.find(
+    (m) => m.participant_id === myId,
+  )
 
   return (
     <main className="page-shell">
@@ -1216,6 +1400,14 @@ function Leaderboard({
                 </span>{" "}
                 · {me.full_name}
               </p>
+              {myGroup && (
+                <p className="mt-1 text-xs text-white/45">
+                  {currentRound?.name}: {myGroup.half ? "Team" : "Group"}{" "}
+                  <span className="font-semibold text-gold">
+                    {groupLabel(myGroup)}
+                  </span>
+                </p>
+              )}
             </div>
             <p className="font-mono text-xl font-semibold text-gold">
               {formatMoney(me.balance)}
@@ -1356,6 +1548,7 @@ function PlayerPage({
   games,
   isMe,
   navigate,
+  groupCard,
 }: {
   player: Player | null
   totalPlayers: number
@@ -1363,6 +1556,7 @@ function PlayerPage({
   games: Game[]
   isMe: boolean
   navigate: (page: Page) => void
+  groupCard?: ReactNode
 }) {
   const [history, setHistory] = useState<Transaction[]>([])
   const playerId = player?.id
@@ -1460,6 +1654,7 @@ function PlayerPage({
           </div>
         </div>
         <div className="grid gap-5">
+          {groupCard}
           <div className="glass-card p-6">
             <div className="flex items-start justify-between">
               <div>
@@ -1614,6 +1809,7 @@ function Admin({
   transactions,
   games,
   participants,
+  currentRound,
   isLeaderboardAccessible,
   gameStatus,
   refetchData,
@@ -1622,6 +1818,7 @@ function Admin({
   transactions: Transaction[]
   games: Game[]
   participants: Participant[]
+  currentRound: GroupRound | null
   isLeaderboardAccessible: boolean
   gameStatus: GameStatus
   refetchData: () => Promise<void>
@@ -1900,6 +2097,16 @@ function Admin({
                 games={games}
                 transactions={transactions}
                 gameStatus={gameStatus}
+                currentRound={currentRound}
+                refetchData={refetchData}
+                setNotice={setNotice}
+              />
+            )}
+            {tab === "groups" && (
+              <GroupsPanel
+                players={players}
+                games={games}
+                currentRound={currentRound}
                 refetchData={refetchData}
                 setNotice={setNotice}
               />
@@ -2028,6 +2235,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 const adminItems: [AdminTab, typeof BarChart3][] = [
   ["overview", BarChart3],
   ["players", Users],
+  ["groups", BriefcaseBusiness],
   ["scoring", CircleDollarSign],
   ["games", Gamepad2],
   ["activity", Activity],
@@ -2073,7 +2281,12 @@ function AdminOverview({
   const moneyInPlay = players.reduce((sum, player) => sum + player.balance, 0)
 
   const kpis = [
-    [Users, "Players", players.length, "Registered"],
+    [
+      Users,
+      "Players",
+      players.length,
+      `${players.filter((p) => p.checked_in_at).length} checked in`,
+    ],
     [
       CircleDollarSign,
       "Money in play",
@@ -2228,6 +2441,21 @@ function PlayersPanel({
     await refetchData()
   }
 
+  // For students who cannot check in from a phone
+  const togglePresent = async (player: Player) => {
+    const { error } = await supabase
+      .from("participants")
+      .update({
+        checked_in_at: player.checked_in_at ? null : new Date().toISOString(),
+      })
+      .eq("id", player.id)
+    if (error) {
+      setNotice(`⚠️ Could not update presence: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
   const removePlayer = async (player: Player) => {
     if (
       !confirm(
@@ -2341,7 +2569,7 @@ function PlayersPanel({
             const details = participants.find((p) => p.id === player.id)
             return (
               <div
-                className="grid items-center gap-3 py-3 sm:grid-cols-[1.2fr_1.2fr_auto_auto]"
+                className="grid items-center gap-3 py-3 sm:grid-cols-[1.2fr_1.2fr_auto_auto_auto]"
                 key={player.id}
               >
                 <div className="min-w-0">
@@ -2363,6 +2591,18 @@ function PlayersPanel({
                 <span className="font-mono text-sm text-white/80">
                   {formatMoney(player.balance)}
                 </span>
+                <button
+                  type="button"
+                  aria-pressed={Boolean(player.checked_in_at)}
+                  onClick={() => togglePresent(player)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                    player.checked_in_at
+                      ? "border-gain/30 bg-gain/10 text-gain"
+                      : "border-white/10 text-white/35 hover:text-white"
+                  }`}
+                >
+                  {player.checked_in_at ? "Present" : "Absent"}
+                </button>
                 <Button variant="danger" onClick={() => removePlayer(player)}>
                   Remove
                 </Button>
@@ -2387,6 +2627,7 @@ function BankerPanel({
   games,
   transactions,
   gameStatus,
+  currentRound,
   refetchData,
   setNotice,
 }: {
@@ -2394,6 +2635,7 @@ function BankerPanel({
   games: Game[]
   transactions: Transaction[]
   gameStatus: GameStatus
+  currentRound: GroupRound | null
   refetchData: () => Promise<void>
   setNotice: (notice: string) => void
 }) {
@@ -2466,6 +2708,19 @@ function BankerPanel({
       )
       if (allKnown || /[\s,;]$/.test(value)) addCodes(value)
     }
+  }
+
+  // Groups (or teams) of the current round, for awarding everyone at once
+  const groupMembers = currentRound?.group_members ?? []
+  const groupLabels = [...new Set(groupMembers.map(groupLabel))].sort(
+    (a, b) => parseInt(a) - parseInt(b) || a.localeCompare(b),
+  )
+  const addGroup = (label: string) => {
+    const ids = groupMembers
+      .filter((m) => groupLabel(m) === label)
+      .map((m) => m.participant_id)
+    setSelectedIds((current) => [...new Set([...current, ...ids])])
+    setEntryError("")
   }
 
   const onEntryEnter = () => {
@@ -2612,6 +2867,24 @@ function BankerPanel({
               disabled={!isLive}
             />
             {entryError && <span className="field-error">{entryError}</span>}
+            {groupLabels.length > 0 && (
+              <select
+                className="field-control"
+                value=""
+                onChange={(e) => e.target.value && addGroup(e.target.value)}
+                aria-label="Add a whole group"
+                disabled={!isLive}
+              >
+                <option value="">
+                  Or add a whole group ({currentRound?.name})
+                </option>
+                {groupLabels.map((label) => (
+                  <option value={label} key={label}>
+                    {/[AB]$/.test(label) ? "Team" : "Group"} {label}
+                  </option>
+                ))}
+              </select>
+            )}
             {suggestions.length > 0 && (
               <div className="mt-2 overflow-hidden rounded-xl border border-white/10">
                 {suggestions.map((player) => (
@@ -2766,6 +3039,371 @@ function BankerPanel({
             <p className="py-4 text-xs text-white/30">No transactions yet.</p>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// Groups of a round (saved or still a draft), one card per group
+function GroupGrid({
+  members,
+  players,
+}: {
+  members: GroupAssignment[]
+  players: Player[]
+}) {
+  const numbers = [...new Set(members.map((m) => m.group_number))].sort(
+    (a, b) => a - b,
+  )
+  const nameOf = (member: GroupAssignment) => {
+    const player = players.find((p) => p.id === member.participant_id)
+    return player
+      ? `${player.full_name} · ${playerSubtitle(player).split(" · ")[1]}`
+      : "Unknown player"
+  }
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {numbers.map((number) => {
+        const group = members.filter((m) => m.group_number === number)
+        const halves = group.some((m) => m.half)
+          ? (["A", "B"] as const)
+          : ([null] as const)
+        return (
+          <div
+            className="rounded-xl border border-white/8 bg-white/2 p-4"
+            key={number}
+          >
+            <p className="flex items-center justify-between text-sm font-semibold text-gold">
+              Group {number}
+              <span className="text-xs font-normal text-white/30">
+                {group.length} players
+              </span>
+            </p>
+            {halves.map((half) => (
+              <div key={half ?? "all"}>
+                {half && (
+                  <p className="mt-3 text-[10px] uppercase tracking-widest text-white/35">
+                    Team {number}
+                    {half}
+                  </p>
+                )}
+                <ul className="mt-2 space-y-1 text-xs text-white/65">
+                  {group
+                    .filter((m) => m.half === half)
+                    .map((member) => (
+                      <li key={member.participant_id}>{nameOf(member)}</li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function GroupsPanel({
+  players,
+  games,
+  currentRound,
+  refetchData,
+  setNotice,
+}: {
+  players: Player[]
+  games: Game[]
+  currentRound: GroupRound | null
+  refetchData: () => Promise<void>
+  setNotice: (notice: string) => void
+}) {
+  const [name, setName] = useState("")
+  const [mode, setMode] = useState<"size" | "count">("size")
+  const [value, setValue] = useState("8")
+  const [onlyPresent, setOnlyPresent] = useState(true)
+  const [draft, setDraft] = useState<GroupAssignment[] | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const present = players.filter((player) => player.checked_in_at)
+  const eligible = onlyPresent ? present : players
+  const number = Math.max(1, Math.floor(Number(value)) || 1)
+  const groupCount =
+    mode === "count"
+      ? number
+      : Math.max(1, Math.round(eligible.length / number))
+
+  const sizesOf = (members: GroupAssignment[]) => {
+    const sizes = new Map<number, number>()
+    for (const m of members)
+      sizes.set(m.group_number, (sizes.get(m.group_number) ?? 0) + 1)
+    const values = [...sizes.values()]
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    return `${members.length} players → ${values.length} group${
+      values.length > 1 ? "s" : ""
+    } of ${min === max ? min : `${min}–${max}`}`
+  }
+
+  const preview = () => {
+    if (!eligible.length) {
+      setNotice(
+        onlyPresent
+          ? "⚠️ Nobody has checked in yet."
+          : "⚠️ There are no players yet.",
+      )
+      return
+    }
+    setDraft(makeGroups(eligible, groupCount))
+  }
+
+  // Saves a round and its members; the newest round is the current one
+  const publish = async (roundName: string, members: GroupAssignment[]) => {
+    setSaving(true)
+    const { data: round, error } = await supabase
+      .from("group_rounds")
+      .insert({ name: roundName })
+      .select()
+      .single()
+    if (error || !round) {
+      setSaving(false)
+      setNotice(`⚠️ Could not create the round: ${error?.message}`)
+      return false
+    }
+    const { error: membersError } = await supabase
+      .from("group_members")
+      .insert(members.map((m) => ({ ...m, round_id: round.id })))
+    if (membersError) {
+      await supabase.from("group_rounds").delete().eq("id", round.id)
+      setSaving(false)
+      setNotice(`⚠️ Could not save the groups: ${membersError.message}`)
+      return false
+    }
+    await refetchData()
+    setSaving(false)
+    return true
+  }
+
+  const confirmDraft = async () => {
+    if (!draft) return
+    const roundName = name.trim() || "Groups"
+    if (await publish(roundName, draft)) {
+      setDraft(null)
+      setName("")
+      setNotice(`Groups published for "${roundName}". Phones are updated.`)
+    }
+  }
+
+  const current = currentRound?.group_members ?? []
+  const isSplit = current.some((m) => m.half)
+  // Checked-in players who arrived after the current round was made
+  const latecomers = currentRound
+    ? present.filter((p) => !current.some((m) => m.participant_id === p.id))
+    : []
+
+  const splitCurrent = async () => {
+    if (!currentRound) return
+    const roundName = prompt(
+      "Name of the new round (each group becomes teams A and B):",
+      "Startup Fail Fest",
+    )
+    if (!roundName?.trim()) return
+    if (await publish(roundName.trim(), splitGroups(current, players))) {
+      setNotice(`Teams published for "${roundName.trim()}".`)
+    }
+  }
+
+  // Each latecomer joins the smallest group (and its smallest team)
+  const placeLatecomers = async () => {
+    if (!currentRound || !latecomers.length) return
+    const placed: GroupAssignment[] = [...current]
+    const added: GroupAssignment[] = []
+    for (const player of latecomers) {
+      const numbers = [...new Set(placed.map((m) => m.group_number))]
+      const sizeOf = (n: number, half: GroupAssignment["half"]) =>
+        placed.filter(
+          (m) => m.group_number === n && (half === null || m.half === half),
+        ).length
+      const groupNumber = numbers.sort(
+        (a, b) => sizeOf(a, null) - sizeOf(b, null) || a - b,
+      )[0]
+      const half = !isSplit
+        ? null
+        : sizeOf(groupNumber, "A") <= sizeOf(groupNumber, "B")
+          ? "A"
+          : "B"
+      const member = {
+        participant_id: player.id,
+        group_number: groupNumber,
+        half,
+      } as GroupAssignment
+      placed.push(member)
+      added.push(member)
+    }
+    setSaving(true)
+    const { error } = await supabase
+      .from("group_members")
+      .insert(added.map((m) => ({ ...m, round_id: currentRound.id })))
+    setSaving(false)
+    if (error) {
+      setNotice(`⚠️ Could not place latecomers: ${error.message}`)
+    } else {
+      setNotice(`${added.length} latecomer${added.length > 1 ? "s" : ""} placed.`)
+      await refetchData()
+    }
+  }
+
+  const deleteCurrent = async () => {
+    if (!currentRound) return
+    if (
+      !confirm(
+        `Delete the round "${currentRound.name}"? The previous round, if any, becomes the current one.`,
+      )
+    )
+      return
+    const { error } = await supabase
+      .from("group_rounds")
+      .delete()
+      .eq("id", currentRound.id)
+    if (error) {
+      setNotice(`⚠️ Could not delete the round: ${error.message}`)
+    } else {
+      await refetchData()
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="admin-card">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl text-white">New round</h2>
+            <p className="mt-1 text-xs text-white/35">
+              {present.length} of {players.length} players checked in. Groups
+              are random with years mixed, and never hold money.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="field-label lg:col-span-2">
+            Round name
+            <input
+              className="field-control"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Sell Me This Pen"
+              list="round-names"
+            />
+            <datalist id="round-names">
+              {games.map((g) => (
+                <option value={g.name} key={g.id} />
+              ))}
+            </datalist>
+          </label>
+          <label className="field-label">
+            Make groups by
+            <select
+              className="field-control"
+              value={mode}
+              onChange={(e) => {
+                setMode(e.target.value as "size" | "count")
+                setDraft(null)
+              }}
+            >
+              <option value="size">Players per group</option>
+              <option value="count">Number of groups</option>
+            </select>
+          </label>
+          <label className="field-label">
+            {mode === "size" ? "Players per group" : "Number of groups"}
+            <input
+              className="field-control"
+              type="number"
+              min="1"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setDraft(null)
+              }}
+            />
+          </label>
+        </div>
+        <label className="mt-4 flex items-center gap-2 text-xs text-white/55">
+          <input
+            type="checkbox"
+            checked={onlyPresent}
+            onChange={(e) => {
+              setOnlyPresent(e.target.checked)
+              setDraft(null)
+            }}
+          />
+          Only players who checked in ({present.length})
+        </label>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <Button variant="secondary" onClick={preview}>
+            <Sparkles size={15} /> {draft ? "Reshuffle" : "Preview groups"}
+          </Button>
+          {draft && (
+            <>
+              <Button onClick={confirmDraft} disabled={saving}>
+                <Check size={15} /> {saving ? "Publishing..." : "Publish groups"}
+              </Button>
+              <span className="text-xs text-white/45">{sizesOf(draft)}</span>
+            </>
+          )}
+        </div>
+        {draft && (
+          <div className="mt-5 border-t border-white/8 pt-5">
+            <p className="mb-3 text-xs text-gold">
+              Preview only. Nothing is saved until you publish.
+            </p>
+            <GroupGrid members={draft} players={players} />
+          </div>
+        )}
+      </div>
+
+      <div className="admin-card">
+        {currentRound ? (
+          <>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-white/30">
+                  Current round
+                </p>
+                <h2 className="font-display text-xl text-white">
+                  {currentRound.name}
+                </h2>
+                <p className="mt-1 text-xs text-white/35">{sizesOf(current)}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {latecomers.length > 0 && (
+                  <Button onClick={placeLatecomers} disabled={saving}>
+                    <Plus size={15} /> Place {latecomers.length} latecomer
+                    {latecomers.length > 1 ? "s" : ""}
+                  </Button>
+                )}
+                {!isSplit && (
+                  <Button
+                    variant="secondary"
+                    onClick={splitCurrent}
+                    disabled={saving}
+                  >
+                    Split each group in two
+                  </Button>
+                )}
+                <Button variant="danger" onClick={deleteCurrent}>
+                  Delete round
+                </Button>
+              </div>
+            </div>
+            <div className="mt-5">
+              <GroupGrid members={current} players={players} />
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-white/35">
+            No groups yet. Create a round above when a game needs groups.
+          </p>
+        )}
       </div>
     </div>
   )
@@ -3051,6 +3689,10 @@ export default function App() {
   const [registrationOpensAt, setRegistrationOpensAt] = useState(
     () => new Date(DEFAULT_REGISTRATION_OPENS_AT),
   )
+  const [checkinOpensAt, setCheckinOpensAt] = useState(
+    () => new Date(DEFAULT_CHECKIN_OPENS_AT),
+  )
+  const [currentRound, setCurrentRound] = useState<GroupRound | null>(null)
   const [, setLoadingInitial] = useState(true)
   const refetchTimer = useRef<number | null>(null)
   // The player registered on this phone, if any
@@ -3087,8 +3729,14 @@ export default function App() {
   // Fetch all Supabase data
   const fetchData = async () => {
     try {
-      const [balancesRes, transactionsRes, gamesRes, participantsRes, settingsRes] =
-        await Promise.all([
+      const [
+        balancesRes,
+        transactionsRes,
+        gamesRes,
+        participantsRes,
+        settingsRes,
+        roundRes,
+      ] = await Promise.all([
           supabase.from("player_balances").select("*"),
           // Latest movements only; balances come from the view above
           supabase
@@ -3103,12 +3751,20 @@ export default function App() {
             : Promise.resolve({ data: null }),
           // select("*") so this still works before registration_opens_at exists
           supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
+          // The current round is the most recent one, with its members
+          supabase
+            .from("group_rounds")
+            .select("*, group_members(*)")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
         ])
 
       if (balancesRes.data) setBalances(balancesRes.data)
       if (transactionsRes.data) setTransactions(transactionsRes.data)
       if (gamesRes.data) setGames(gamesRes.data)
       if (participantsRes.data) setParticipants(participantsRes.data)
+      if (!roundRes.error) setCurrentRound(roundRes.data)
 
       if (settingsRes.data) {
         setIsLeaderboardAccessible(
@@ -3121,6 +3777,9 @@ export default function App() {
           setRegistrationOpensAt(
             new Date(settingsRes.data.registration_opens_at),
           )
+        }
+        if (settingsRes.data.checkin_opens_at) {
+          setCheckinOpensAt(new Date(settingsRes.data.checkin_opens_at))
         }
         if (settingsRes.data.starting_capital) {
           setStartingCapital(Number(settingsRes.data.starting_capital))
@@ -3161,6 +3820,16 @@ export default function App() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "games" },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "group_rounds" },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "group_members" },
         scheduleRefetch,
       )
       .on(
@@ -3242,9 +3911,12 @@ export default function App() {
           navigate={navigate}
           onRegistered={fetchData}
           opensAt={registrationOpensAt}
+          checkinOpensAt={checkinOpensAt}
           gameStatus={gameStatus}
           registration={registration}
           setRegistration={setRegistration}
+          players={players}
+          currentRound={currentRound}
         />
       )}
       {/* The Portfolio page shares the leaderboard lock */}
@@ -3258,6 +3930,7 @@ export default function App() {
           gameStatus={gameStatus}
           navigate={navigate}
           myId={myId}
+          currentRound={currentRound}
         />
       )}
       {page === "portfolio" && isLeaderboardAccessible && (
@@ -3268,6 +3941,16 @@ export default function App() {
           games={games}
           isMe={shownPlayer !== null && shownPlayer.id === myId}
           navigate={navigate}
+          groupCard={
+            shownPlayer !== null &&
+            shownPlayer.id === myId && (
+              <MyGroupCard
+                round={currentRound}
+                players={players}
+                myId={myId}
+              />
+            )
+          }
         />
       )}
       {page === "admin" && (
@@ -3276,6 +3959,7 @@ export default function App() {
           transactions={transactions}
           games={games}
           participants={participants}
+          currentRound={currentRound}
           isLeaderboardAccessible={isLeaderboardAccessible}
           gameStatus={gameStatus}
           refetchData={fetchData}
