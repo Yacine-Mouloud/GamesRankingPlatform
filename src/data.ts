@@ -82,6 +82,8 @@ export interface Settings {
   game_status: GameStatus
   registration_opens_at?: string // added for the countdown
   starting_capital?: number
+  // Finalists of "The Big Deal", locked by an admin; null before the final
+  finalist_ids?: string[] | null
   updated_at?: string
 }
 

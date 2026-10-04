@@ -62,12 +62,19 @@ import {
   splitGroups,
 } from "./data"
 
-type Page = "home" | "register" | "leaderboard" | "portfolio" | "admin"
+type Page =
+  | "home"
+  | "register"
+  | "leaderboard"
+  | "portfolio"
+  | "admin"
+  | "display"
 type AdminTab =
   | "overview"
   | "players"
   | "groups"
   | "scoring"
+  | "events"
   | "games"
   | "activity"
   | "poster"
@@ -78,6 +85,7 @@ const pageFromPath = (): Page => {
   if (path.startsWith("/leaderboard")) return "leaderboard"
   if (path.startsWith("/portfolio")) return "portfolio"
   if (path.startsWith("/admin")) return "admin"
+  if (path.startsWith("/display")) return "display"
   return "home"
 }
 
@@ -87,6 +95,7 @@ const paths: Record<Page, string> = {
   leaderboard: "/leaderboard",
   portfolio: "/portfolio",
   admin: "/admin",
+  display: "/display",
 }
 
 function Button({
@@ -765,6 +774,49 @@ function MyGroupCard({
   )
 }
 
+const QUIZ_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLScY4y0LGHEFr1zf0Pxvwai2AkCRekfDDKuKjveAR0ThuPlMxw/viewform"
+// Id of the form's "Trader code" question (the number in entry.<id>), used to
+// fill it in for the student. Set to null if the form has no such question.
+const QUIZ_CODE_ENTRY_ID: string | null = "911784174"
+// The quiz opens when an admin sets a game with this kind of name to "Live"
+const QUIZ_GAME = /quiz|insider/i
+
+function QuizCard({ code, className = "" }: { code: string; className?: string }) {
+  const url = QUIZ_CODE_ENTRY_ID
+    ? `${QUIZ_FORM_URL}?usp=pp_url&entry.${QUIZ_CODE_ENTRY_ID}=${encodeURIComponent(code)}`
+    : QUIZ_FORM_URL
+  return (
+    <div
+      className={`rounded-2xl border border-gain/25 bg-gain/5 p-5 text-left ${className}`}
+    >
+      <p className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-gain">
+        <span className="live-dot bg-gain" /> Quiz open
+      </p>
+      <p className="mt-2 text-sm leading-relaxed text-white/70">
+        Every correct answer earns you money.{" "}
+        {QUIZ_CODE_ENTRY_ID ? (
+          "Your trader code is filled in for you."
+        ) : (
+          <>
+            Type your trader code{" "}
+            <span className="font-mono font-semibold text-gold">{code}</span>{" "}
+            when the form asks for it.
+          </>
+        )}
+      </p>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="btn btn-primary mt-4 w-full"
+      >
+        Take the quiz <ArrowRight size={16} />
+      </a>
+    </div>
+  )
+}
+
 // Check-in from a phone that did not do the registration: find the player by
 // trader code or email, mark them present and remember them on this phone
 function CheckInLookup({
@@ -829,6 +881,7 @@ function Registration({
   setRegistration,
   players,
   currentRound,
+  quizOpen,
 }: {
   navigate: (page: Page) => void
   onRegistered?: () => void
@@ -839,6 +892,7 @@ function Registration({
   setRegistration: (registration: SavedRegistration | null) => void
   players: Player[]
   currentRound: GroupRound | null
+  quizOpen: boolean
 }) {
   const [justRegistered, setJustRegistered] = useState(false)
   const [checkingIn, setCheckingIn] = useState(false)
@@ -1192,6 +1246,12 @@ function Registration({
                     myId={registration?.id ?? null}
                     className="mt-5 w-full max-w-xs"
                   />
+                  {quizOpen && registration && (
+                    <QuizCard
+                      code={registration.code}
+                      className="mt-5 w-full max-w-xs"
+                    />
+                  )}
                   <Button
                     onClick={() => navigate("leaderboard")}
                     className="mt-7"
@@ -1323,9 +1383,6 @@ function Leaderboard({
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <Button onClick={() => navigate("home")} variant="secondary">
               Return to Event
-            </Button>
-            <Button onClick={() => navigate("admin")}>
-              Admin Control Desk <ArrowRight size={16} />
             </Button>
           </div>
         </div>
@@ -1814,6 +1871,7 @@ function Admin({
   games,
   participants,
   currentRound,
+  finalistIds,
   isLeaderboardAccessible,
   gameStatus,
   refetchData,
@@ -1823,6 +1881,7 @@ function Admin({
   games: Game[]
   participants: Participant[]
   currentRound: GroupRound | null
+  finalistIds: string[]
   isLeaderboardAccessible: boolean
   gameStatus: GameStatus
   refetchData: () => Promise<void>
@@ -2119,6 +2178,16 @@ function Admin({
               <GamesPanel games={games} refetchData={refetchData} />
             )}
             {tab === "poster" && <PosterPanel />}
+            {tab === "events" && (
+              <EventsPanel
+                players={players}
+                games={games}
+                gameStatus={gameStatus}
+                finalistIds={finalistIds}
+                refetchData={refetchData}
+                setNotice={setNotice}
+              />
+            )}
             {tab === "activity" && (
               <ActivityPanel
                 transactions={transactions}
@@ -2242,6 +2311,7 @@ const adminItems: [AdminTab, typeof BarChart3][] = [
   ["players", Users],
   ["groups", BriefcaseBusiness],
   ["scoring", CircleDollarSign],
+  ["events", Sparkles],
   ["games", Gamepad2],
   ["activity", Activity],
   ["poster", QrCode],
@@ -2784,9 +2854,9 @@ function BankerPanel({
   const undoBatch = async (batch: Transaction[]) => {
     if (
       !confirm(
-        `Undo ${formatSigned(Number(batch[0].amount))} for ${batch.length} player${
+        `Undo this entry for ${batch.length} player${
           batch.length > 1 ? "s" : ""
-        }?`,
+        }${batch[0].note ? ` (${batch[0].note.split(":")[0]})` : ""}?`,
       )
     )
       return
@@ -2995,6 +3065,9 @@ function BankerPanel({
           {batches.map((batch) => {
             const first = batch[0]
             const batchAmount = Number(first.amount)
+            const mixed = batch.some(
+              (item) => Number(item.amount) !== batchAmount,
+            )
             const names = batch.map(
               (item) =>
                 players.find((p) => p.id === item.participant_id)?.full_name ||
@@ -3007,13 +3080,17 @@ function BankerPanel({
               >
                 <div className="min-w-0">
                   <p className="text-sm text-white">
-                    <span
-                      className={`font-mono ${
-                        batchAmount < 0 ? "text-loss" : "text-gain"
-                      }`}
-                    >
-                      {formatSigned(batchAmount)}
-                    </span>
+                    {mixed ? (
+                      "Mixed amounts"
+                    ) : (
+                      <span
+                        className={`font-mono ${
+                          batchAmount < 0 ? "text-loss" : "text-gain"
+                        }`}
+                      >
+                        {formatSigned(batchAmount)}
+                      </span>
+                    )}
                     {batch.length > 1 && (
                       <span className="text-white/45"> × {batch.length}</span>
                     )}
@@ -3024,7 +3101,9 @@ function BankerPanel({
                   </p>
                   <p className="mt-0.5 text-xs text-white/25">
                     {games.find((g) => g.id === first.game_id)?.name || "Other"}
-                    {first.note && ` · ${first.note}`} ·{" "}
+                    {first.note &&
+                      ` · ${mixed ? first.note.split(":")[0] : first.note}`}{" "}
+                    ·{" "}
                     {new Date(first.created_at).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -3415,27 +3494,38 @@ function GroupsPanel({
   )
 }
 
+// Address students reach from a QR code. A copy running on a developer's
+// machine points at the public site, since phones cannot open localhost.
+const PUBLIC_SITE_URL = "https://wall-street-night.vercel.app"
+const joinUrl = () =>
+  `${
+    ["localhost", "127.0.0.1"].includes(window.location.hostname)
+      ? PUBLIC_SITE_URL
+      : window.location.origin
+  }${paths.register}`
+
+// QR code drawn locally as one SVG path: a square per dark module
+function qrPathFor(text: string): { size: number; path: string } | null {
+  try {
+    const { modules } = QRCode.create(text.trim() || " ", {
+      errorCorrectionLevel: "M",
+    })
+    let path = ""
+    for (let row = 0; row < modules.size; row++) {
+      for (let col = 0; col < modules.size; col++) {
+        if (modules.get(row, col)) path += `M${col} ${row}h1v1h-1z`
+      }
+    }
+    return { size: modules.size, path }
+  } catch {
+    return null
+  }
+}
+
 // Printable QR code that sends students to the register / check-in page
 function PosterPanel() {
-  const [url, setUrl] = useState(`${window.location.origin}${paths.register}`)
-
-  // Drawn locally as one SVG path: a square per dark module
-  const qr = useMemo(() => {
-    try {
-      const { modules } = QRCode.create(url.trim() || " ", {
-        errorCorrectionLevel: "M",
-      })
-      let path = ""
-      for (let row = 0; row < modules.size; row++) {
-        for (let col = 0; col < modules.size; col++) {
-          if (modules.get(row, col)) path += `M${col} ${row}h1v1h-1z`
-        }
-      }
-      return { size: modules.size, path }
-    } catch {
-      return null
-    }
-  }, [url])
+  const [url, setUrl] = useState(joinUrl)
+  const qr = useMemo(() => qrPathFor(url), [url])
 
   return (
     <div className="space-y-5">
@@ -3487,6 +3577,492 @@ function PosterPanel() {
           <li>3. Keep your trader code: you need it at every game</li>
         </ol>
         <p className="mt-5 break-all font-mono text-xs text-ink/45">{url}</p>
+      </div>
+    </div>
+  )
+}
+
+// One player's gain or loss inside a room-wide event
+type Movement = { player: Player; amount: number; note?: string }
+
+// Tax Day: each of the 3 richest pays 20% of their balance; the pool is
+// shared equally by the poorest half. Players are ranked richest first.
+function taxDayMovements(ranked: Player[]): Movement[] {
+  const receivers = ranked.slice(3).slice(-Math.floor(ranked.length / 2))
+  if (ranked.length < 4 || receivers.length === 0) return []
+  const payers = ranked.slice(0, 3)
+  const dues = payers.map((p) => Math.max(0, Math.floor(p.balance * 0.2)))
+  const pool = dues.reduce((sum, due) => sum + due, 0)
+  const share = Math.floor(pool / receivers.length)
+  if (share <= 0) return []
+  // Dollars that do not divide evenly stay with the richest player
+  dues[0] -= pool - share * receivers.length
+  return [
+    ...payers.map((player, index) => ({ player, amount: -dues[index] })),
+    ...receivers.map((player) => ({ player, amount: share })),
+  ].filter((movement) => movement.amount !== 0)
+}
+
+// Bailout: the 5 poorest players receive $2,000 each
+function bailoutMovements(ranked: Player[]): Movement[] {
+  return ranked.slice(-5).map((player) => ({ player, amount: 2000 }))
+}
+
+// Quiz results pasted from a spreadsheet: one line per answer with a trader
+// code and a score ("WS-4821<tab>8" or "4821, 8 / 10"). First answer wins.
+function parseQuizScores(text: string, players: Player[]) {
+  const scores = new Map<string, number>()
+  const unknown: string[] = []
+  let duplicates = 0
+  for (const line of text.split(/\r?\n/)) {
+    const cells = line.split(/[\t,;]+/).map((cell) => cell.trim())
+    const codeCell = cells.find((cell) => normalizeCode(cell))
+    const scoreCell = cells.find(
+      (cell) => cell !== codeCell && /^\d+(\.\d+)?(\s*\/\s*\d+)?$/.test(cell),
+    )
+    if (!codeCell || !scoreCell) continue
+    const code = normalizeCode(codeCell) as string
+    const player = players.find((p) => p.code === code)
+    if (!player) unknown.push(code)
+    else if (scores.has(player.id)) duplicates++
+    else scores.set(player.id, parseFloat(scoreCell))
+  }
+  return { scores, unknown, duplicates }
+}
+
+// plain shows the amounts as balances, without a + or − sign
+function MovementList({
+  movements,
+  plain = false,
+}: {
+  movements: Movement[]
+  plain?: boolean
+}) {
+  return (
+    <div className="mt-4 max-h-72 divide-y divide-white/6 overflow-y-auto rounded-xl border border-white/8 px-4">
+      {movements.map(({ player, amount, note }) => (
+        <div
+          className="flex items-center justify-between gap-3 py-2 text-sm"
+          key={player.id}
+        >
+          <span className="min-w-0 truncate text-white/75">
+            <span className="mr-2 font-mono text-xs text-white/30">
+              #{player.rank}
+            </span>
+            {player.full_name}
+            {note && <span className="text-white/35"> · {note}</span>}
+          </span>
+          <span
+            className={`font-mono ${
+              plain ? "text-white" : amount < 0 ? "text-loss" : "text-gain"
+            }`}
+          >
+            {plain ? formatMoney(amount) : formatSigned(amount)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EventsPanel({
+  players,
+  games,
+  gameStatus,
+  finalistIds,
+  refetchData,
+  setNotice,
+}: {
+  players: Player[]
+  games: Game[]
+  gameStatus: GameStatus
+  finalistIds: string[]
+  refetchData: () => Promise<void>
+  setNotice: (notice: string) => void
+}) {
+  const isLive = gameStatus === "live"
+  const [onlyPresent, setOnlyPresent] = useState(true)
+  const [draft, setDraft] = useState<{
+    title: string
+    movements: Movement[]
+  } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [quizText, setQuizText] = useState("")
+  // null until loaded (or when the quiz migration has not been run)
+  const [quizConfig, setQuizConfig] = useState<{
+    secret: string
+    dollars_per_point: number
+  } | null>(null)
+  const [perPoint, setPerPoint] = useState("")
+  const [answeredIds, setAnsweredIds] = useState<string[]>([])
+  const [showSecret, setShowSecret] = useState(false)
+
+  // Answers arrive from the form on their own; reload when balances move
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      supabase.from("quiz_config").select("*").eq("id", 1).maybeSingle(),
+      supabase.from("quiz_submissions").select("participant_id"),
+    ]).then(([configRes, answersRes]) => {
+      if (cancelled) return
+      if (configRes.data) {
+        setQuizConfig(configRes.data)
+        setPerPoint((current) =>
+          current === "" ? String(configRes.data.dollars_per_point) : current,
+        )
+      }
+      if (answersRes.data) {
+        setAnsweredIds(answersRes.data.map((row) => row.participant_id))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [players])
+
+  // Room-wide events only involve the players who are in the room
+  const room = onlyPresent
+    ? players.filter((player) => player.checked_in_at)
+    : players
+
+  const gameIdByName = (pattern: RegExp) =>
+    games.find((g) => pattern.test(g.name))?.id ?? null
+
+  // Saved as one batch, so it shows as one entry in Scoring and can be undone
+  const post = async (
+    movements: Movement[],
+    gameId: string | null,
+    note: string,
+  ) => {
+    setSaving(true)
+    const batchId = crypto.randomUUID()
+    const { error } = await supabase.from("transactions").insert(
+      movements.map((movement) => ({
+        participant_id: movement.player.id,
+        game_id: gameId,
+        amount: movement.amount,
+        note: movement.note ? `${note}: ${movement.note}` : note,
+        batch_id: batchId,
+      })),
+    )
+    setSaving(false)
+    if (error) {
+      setNotice(`⚠️ Failed to apply: ${error.message}`)
+      return false
+    }
+    await refetchData()
+    return true
+  }
+
+  const previewEvent = (title: string, movements: Movement[]) => {
+    if (!movements.length) {
+      setNotice(`⚠️ Not enough players in the room for ${title}.`)
+      return
+    }
+    setDraft({ title, movements })
+  }
+
+  const applyEvent = async () => {
+    if (!draft) return
+    if (
+      await post(draft.movements, gameIdByName(/^the market crash$/i), draft.title)
+    ) {
+      setNotice(
+        `${draft.title} applied to ${draft.movements.length} players. Undo it from Scoring → Latest entries.`,
+      )
+      setDraft(null)
+    }
+  }
+
+  const finalists = finalistIds
+    .map((id) => players.find((player) => player.id === id))
+    .filter((player): player is Player => Boolean(player))
+
+  const setFinalists = async (ids: string[] | null) => {
+    const { error } = await supabase
+      .from("settings")
+      .update({ finalist_ids: ids, updated_at: new Date().toISOString() })
+      .eq("id", 1)
+    if (error) {
+      setNotice(`⚠️ Could not save the finalists: ${error.message}`)
+    } else {
+      await refetchData()
+      setNotice(ids ? "Finalists locked." : "Finalists cleared.")
+    }
+  }
+
+  const quiz = parseQuizScores(quizText, players)
+  const dollarsPerPoint = Number(quizConfig?.dollars_per_point ?? 0)
+  // Pasted answers of players the form has not already credited
+  const quizRows = [...quiz.scores.entries()]
+    .filter(([id]) => !answeredIds.includes(id))
+    .map(([id, score]) => ({
+      player: players.find((p) => p.id === id) as Player,
+      score,
+    }))
+  const alreadyCredited = quiz.scores.size - quizRows.length
+  const quizMovements: Movement[] = quizRows.map(({ player, score }) => ({
+    player,
+    amount: Math.round(score * dollarsPerPoint),
+    note: `${score} pts`,
+  }))
+
+  const savePerPoint = async () => {
+    const value = Math.max(0, Number(perPoint) || 0)
+    const { error } = await supabase
+      .from("quiz_config")
+      .update({ dollars_per_point: value })
+      .eq("id", 1)
+    if (error) {
+      setNotice(`⚠️ Could not save: ${error.message}`)
+    } else {
+      setQuizConfig((current) =>
+        current ? { ...current, dollars_per_point: value } : current,
+      )
+      setNotice(`Each quiz point is now worth ${formatMoney(value)}.`)
+    }
+  }
+
+  // Backup for answers the form's script did not deliver
+  const importQuiz = async () => {
+    if (!quizRows.length) return
+    setSaving(true)
+    let credited = 0
+    const failed: string[] = []
+    for (const { player, score } of quizRows) {
+      const { data, error } = await supabase.rpc("submit_quiz_score", {
+        p_code: player.code,
+        p_score: score,
+      })
+      if (error) failed.push(`${player.code} (${error.message})`)
+      else if (data?.status === "credited") credited++
+    }
+    setSaving(false)
+    await refetchData()
+    setNotice(
+      failed.length
+        ? `⚠️ ${credited} credited, ${failed.length} failed: ${failed.join(", ")}`
+        : `Quiz results posted for ${credited} players.`,
+    )
+    if (!failed.length) setQuizText("")
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="admin-card">
+        <h2 className="font-display text-xl text-white">The Market Crash</h2>
+        <p className="mt-1 text-xs text-white/35">
+          Draw the event card in the room, then apply it here. You see every
+          amount before anything is saved. Double or Nothing and Insider Leak
+          are played in the room and entered from Scoring.
+        </p>
+        <label className="mt-4 flex items-center gap-2 text-xs text-white/55">
+          <input
+            type="checkbox"
+            checked={onlyPresent}
+            onChange={(e) => {
+              setOnlyPresent(e.target.checked)
+              setDraft(null)
+            }}
+          />
+          Only players who checked in ({room.length})
+        </label>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button
+            variant="secondary"
+            disabled={!isLive}
+            onClick={() => previewEvent("Tax Day", taxDayMovements(room))}
+          >
+            Tax Day: top 3 give 20% to the bottom half
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!isLive}
+            onClick={() => previewEvent("Bailout", bailoutMovements(room))}
+          >
+            Bailout: 5 poorest get $2,000
+          </Button>
+        </div>
+        {!isLive && (
+          <p className="mt-3 text-xs font-medium text-gold/90">
+            Available while the game is live.
+          </p>
+        )}
+        {draft && (
+          <div className="mt-5 border-t border-white/8 pt-5">
+            <p className="text-sm font-semibold text-gold">
+              {draft.title}: preview, nothing saved yet
+            </p>
+            <MovementList movements={draft.movements} />
+            <div className="mt-4 flex gap-3">
+              <Button onClick={applyEvent} disabled={saving}>
+                <Check size={15} /> {saving ? "Applying..." : `Apply ${draft.title}`}
+              </Button>
+              <Button variant="secondary" onClick={() => setDraft(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="admin-card">
+        <h2 className="font-display text-xl text-white">
+          The Big Deal: finalists
+        </h2>
+        <p className="mt-1 text-xs text-white/35">
+          Locks the 6 richest players in the room as finalists. The list stays
+          fixed during the final and is shown on the projector page.
+        </p>
+        {finalists.length > 0 ? (
+          <>
+            <MovementList
+              plain
+              movements={finalists.map((player) => ({
+                player,
+                amount: player.balance,
+              }))}
+            />
+            <p className="mt-2 text-xs text-white/30">
+              Amounts shown are current balances.
+            </p>
+            <Button
+              variant="danger"
+              className="mt-4"
+              onClick={() => confirm("Clear the finalists?") && setFinalists(null)}
+            >
+              Clear finalists
+            </Button>
+          </>
+        ) : (
+          <Button
+            className="mt-4"
+            disabled={!isLive || room.length === 0}
+            onClick={() =>
+              confirm(
+                `Lock these finalists?\n${room
+                  .slice(0, 6)
+                  .map((p) => `${p.full_name} (${formatMoney(p.balance)})`)
+                  .join("\n")}`,
+              ) && setFinalists(room.slice(0, 6).map((p) => p.id))
+            }
+          >
+            <Trophy size={15} /> Lock the top 6
+          </Button>
+        )}
+      </div>
+
+      <div className="admin-card">
+        <h2 className="font-display text-xl text-white">Quiz results</h2>
+        {quizConfig ? (
+          <>
+            <p className="mt-1 text-xs text-white/35">
+              Answers are credited automatically when a student submits the
+              form, while the game is live. Only the first answer of each
+              player counts.
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-white/8 bg-white/2 p-4">
+                <p className="font-display text-3xl text-white">
+                  {answeredIds.length}
+                </p>
+                <p className="mt-1 text-xs text-white/40">answers received</p>
+              </div>
+              <label className="field-label sm:col-span-2">
+                Dollars per point
+                <div className="mt-2 flex gap-2">
+                  <input
+                    className="field-control mt-0! min-w-0 flex-1"
+                    type="number"
+                    min="0"
+                    value={perPoint}
+                    onChange={(e) => setPerPoint(e.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    onClick={savePerPoint}
+                    disabled={Number(perPoint) === dollarsPerPoint}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </label>
+            </div>
+            <div className="mt-4 text-xs text-white/40">
+              Secret for the form's script:{" "}
+              {showSecret ? (
+                <code className="break-all font-mono text-white/70">
+                  {quizConfig.secret}
+                </code>
+              ) : (
+                <span className="font-mono">••••••••</span>
+              )}{" "}
+              <button
+                type="button"
+                className="text-gold hover:underline"
+                onClick={() => setShowSecret(!showSecret)}
+              >
+                {showSecret ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <p className="mt-6 border-t border-white/8 pt-5 text-sm font-medium text-white">
+              Backup: paste results by hand
+            </p>
+            <p className="mt-1 text-xs text-white/35">
+              If some answers did not arrive, copy the trader code and score
+              columns from the form's response sheet and paste them here.
+              Players already credited are skipped.
+            </p>
+            <textarea
+              className="field-control min-h-28 font-mono"
+              value={quizText}
+              onChange={(e) => setQuizText(e.target.value)}
+              placeholder={"WS-4821\t8\nWS-1372\t6"}
+              aria-label="Pasted quiz results"
+            />
+            {quizText.trim() && (
+              <p className="mt-3 text-xs text-white/50">
+                {quizRows.length} to credit
+                {alreadyCredited > 0 &&
+                  ` · ${alreadyCredited} already credited`}
+                {quiz.duplicates > 0 &&
+                  ` · ${quiz.duplicates} repeated answer${
+                    quiz.duplicates > 1 ? "s" : ""
+                  } ignored`}
+                {quiz.unknown.length > 0 && (
+                  <span className="text-loss">
+                    {" "}
+                    · unknown codes: {quiz.unknown.join(", ")}
+                  </span>
+                )}
+              </p>
+            )}
+            {quizMovements.length > 0 && (
+              <MovementList movements={quizMovements} />
+            )}
+            <Button
+              className="mt-4"
+              onClick={importQuiz}
+              disabled={!isLive || saving || !quizRows.length}
+            >
+              <Check size={15} />
+              {saving
+                ? "Posting..."
+                : `Post results for ${quizRows.length} players`}
+            </Button>
+            {!isLive && (
+              <p className="mt-2 text-xs font-medium text-gold/90">
+                Available while the game is live.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="mt-2 text-xs text-white/40">
+            Not set up yet: run the quiz migration (20261007_quiz_auto.sql) in
+            Supabase, then reload this page.
+          </p>
+        )}
       </div>
     </div>
   )
@@ -3752,6 +4328,286 @@ function Footer({ navigate }: { navigate: (page: Page) => void }) {
   )
 }
 
+type DisplayView = "join" | "groups" | "board" | "finalists"
+const DISPLAY_VIEWS: [DisplayView, string][] = [
+  ["join", "Join"],
+  ["groups", "Groups"],
+  ["board", "Leaderboard"],
+  ["finalists", "Finalists"],
+]
+
+// Fullscreen page for the projector. Views are switched on the laptop that
+// drives it: keys 1-4 or the arrow keys, F for fullscreen.
+function DisplayPage({
+  players,
+  rankedPlayers,
+  transactions,
+  currentRound,
+  finalistIds,
+  gameStatus,
+}: {
+  players: Player[]
+  rankedPlayers: Player[]
+  transactions: Transaction[]
+  currentRound: GroupRound | null
+  finalistIds: string[]
+  gameStatus: GameStatus
+}) {
+  const [view, setView] = useState<DisplayView>(
+    gameStatus === "setup" ? "join" : "board",
+  )
+  const url = joinUrl()
+  const qr = useMemo(() => qrPathFor(url), [url])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const index = DISPLAY_VIEWS.findIndex(([name]) => name === view)
+      if (/^[1-4]$/.test(event.key)) {
+        setView(DISPLAY_VIEWS[Number(event.key) - 1][0])
+      } else if (event.key === "ArrowRight") {
+        setView(DISPLAY_VIEWS[(index + 1) % DISPLAY_VIEWS.length][0])
+      } else if (event.key === "ArrowLeft") {
+        setView(
+          DISPLAY_VIEWS[
+            (index + DISPLAY_VIEWS.length - 1) % DISPLAY_VIEWS.length
+          ][0],
+        )
+      } else if (event.key.toLowerCase() === "f") {
+        if (document.fullscreenElement) document.exitFullscreen()
+        else document.documentElement.requestFullscreen().catch(() => {})
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [view])
+
+  const present = players.filter((player) => player.checked_in_at)
+  const finalists = finalistIds
+    .map((id) => players.find((player) => player.id === id))
+    .filter((player): player is Player => Boolean(player))
+    .sort((a, b) => b.balance - a.balance)
+  const members = currentRound?.group_members ?? []
+  const labels = [...new Set(members.map(groupLabel))].sort(
+    (a, b) => parseInt(a) - parseInt(b) || a.localeCompare(b),
+  )
+  const isSplit = members.some((m) => m.half)
+
+  return (
+    <main className="flex h-screen flex-col overflow-hidden bg-ink">
+      <header className="flex items-center justify-between px-10 py-6">
+        <Logo />
+        <div className="flex items-center gap-2 text-sm uppercase tracking-[0.25em] text-gold">
+          <span className="live-dot" />
+          {gameStatus === "ended"
+            ? "Market closed"
+            : gameStatus === "live"
+              ? "Live market"
+              : "Opening soon"}
+        </div>
+      </header>
+
+      <section className="min-h-0 flex-1 px-10 pb-6">
+        {view === "join" && (
+          <div className="grid h-full items-center gap-12 lg:grid-cols-2">
+            <div>
+              <p className="eyebrow text-base">EBEC Open Day</p>
+              <h1 className="mt-4 font-display text-7xl leading-tight text-white">
+                Scan to join <span className="text-gold">the market.</span>
+              </h1>
+              <p className="mt-6 text-2xl text-white/55">
+                Register, or tap "I'm here" if you already did. Keep your
+                trader code: you need it at every game.
+              </p>
+              <div className="mt-10 flex gap-10">
+                <div>
+                  <p className="font-mono text-6xl font-semibold text-white">
+                    {present.length}
+                  </p>
+                  <p className="mt-1 text-sm uppercase tracking-widest text-white/40">
+                    In the room
+                  </p>
+                </div>
+                <div>
+                  <p className="font-mono text-6xl font-semibold text-white/50">
+                    {players.length}
+                  </p>
+                  <p className="mt-1 text-sm uppercase tracking-widest text-white/40">
+                    Registered
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="mx-auto flex flex-col items-center rounded-3xl bg-white p-6">
+              {qr && (
+                <svg
+                  viewBox={`-2 -2 ${qr.size + 4} ${qr.size + 4}`}
+                  className="h-[min(58vh,36rem)] w-auto"
+                  shapeRendering="crispEdges"
+                  role="img"
+                  aria-label={`QR code for ${url}`}
+                >
+                  <path d={qr.path} fill="#071426" />
+                </svg>
+              )}
+              <p className="mt-3 break-all font-mono text-lg text-ink/60">
+                {url.replace(/^https?:\/\//, "")}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {view === "groups" && (
+          <div className="flex h-full flex-col">
+            <h1 className="font-display text-5xl text-white">
+              {currentRound ? currentRound.name : "Groups"}
+              <span className="ml-4 text-2xl text-white/40">
+                find your {isSplit ? "team" : "group"}
+              </span>
+            </h1>
+            {labels.length === 0 ? (
+              <p className="mt-10 text-2xl text-white/40">
+                Groups have not been published yet.
+              </p>
+            ) : (
+              <div className="mt-6 grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4 overflow-y-auto">
+                {labels.map((label) => (
+                  <div
+                    className="rounded-2xl border border-gold/20 bg-panel p-5"
+                    key={label}
+                  >
+                    <p className="font-display text-3xl text-gold">
+                      {isSplit ? "Team" : "Group"} {label}
+                    </p>
+                    <ul className="mt-3 space-y-1 text-lg text-white/80">
+                      {members
+                        .filter((m) => groupLabel(m) === label)
+                        .map((m) => (
+                          <li key={m.participant_id} className="truncate">
+                            {players.find((p) => p.id === m.participant_id)
+                              ?.full_name || "Unknown player"}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "board" && (
+          <div className="flex h-full flex-col">
+            <h1 className="font-display text-5xl text-white">
+              {gameStatus === "ended" ? "Final standings" : "The leaderboard"}
+            </h1>
+            <motion.div layout className="mt-6 grid min-h-0 flex-1 grid-rows-10 gap-2">
+              {rankedPlayers.slice(0, 10).map((player) => (
+                <motion.div
+                  layout
+                  key={player.id}
+                  className={`flex items-center gap-6 rounded-xl border px-6 ${
+                    player.rank <= 3
+                      ? "border-gold/30 bg-gold/8"
+                      : "border-white/8 bg-panel"
+                  }`}
+                >
+                  <span
+                    className={`w-14 font-mono text-3xl font-semibold ${
+                      player.rank <= 3 ? "text-gold" : "text-white/40"
+                    }`}
+                  >
+                    {String(player.rank).padStart(2, "0")}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-3xl font-medium text-white">
+                    {player.full_name}
+                    <span className="ml-4 font-mono text-lg text-white/30">
+                      {player.code}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-xl ${
+                      player.change > 0
+                        ? "text-gain"
+                        : player.change < 0
+                          ? "text-loss"
+                          : "text-white/30"
+                    }`}
+                  >
+                    {player.change > 0 ? "▲" : player.change < 0 ? "▼" : ""}{" "}
+                    {player.change !== 0 && `${Math.abs(player.change)}%`}
+                  </span>
+                  <span className="w-48 text-right font-mono text-3xl font-semibold text-white">
+                    {formatMoney(player.balance)}
+                  </span>
+                </motion.div>
+              ))}
+            </motion.div>
+          </div>
+        )}
+
+        {view === "finalists" && (
+          <div className="flex h-full flex-col">
+            <h1 className="font-display text-5xl text-white">
+              The Big Deal <span className="text-gold">finalists</span>
+            </h1>
+            {finalists.length === 0 ? (
+              <p className="mt-10 text-2xl text-white/40">
+                The finalists have not been announced yet.
+              </p>
+            ) : (
+              <motion.div
+                layout
+                className="mt-8 grid min-h-0 flex-1 grid-cols-2 gap-5 lg:grid-cols-3"
+              >
+                {finalists.map((player, index) => (
+                  <motion.div
+                    layout
+                    key={player.id}
+                    className={`flex flex-col items-center justify-center rounded-3xl border p-6 text-center ${
+                      index === 0
+                        ? "border-gold/50 bg-gold/10"
+                        : "border-white/10 bg-panel"
+                    }`}
+                  >
+                    <div className="flex size-20 items-center justify-center rounded-full border border-gold/30 bg-gold/10 font-display text-4xl text-gold">
+                      {player.full_name.charAt(0)}
+                    </div>
+                    <p className="mt-4 text-3xl font-semibold text-white">
+                      {player.full_name}
+                    </p>
+                    <p className="mt-2 font-mono text-4xl font-semibold text-gold">
+                      {formatMoney(player.balance)}
+                    </p>
+                  </motion.div>
+                ))}
+              </motion.div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {view !== "join" && (
+        <Ticker transactions={transactions} players={players} />
+      )}
+      <nav className="absolute bottom-3 right-4 flex gap-1 opacity-20 transition hover:opacity-100">
+        {DISPLAY_VIEWS.map(([name, label], index) => (
+          <button
+            key={name}
+            onClick={() => setView(name)}
+            className={`rounded-lg px-3 py-1.5 text-xs ${
+              view === name
+                ? "bg-gold text-ink"
+                : "bg-white/10 text-white/70 hover:bg-white/20"
+            }`}
+          >
+            {index + 1} · {label}
+          </button>
+        ))}
+      </nav>
+    </main>
+  )
+}
+
 // "/portfolio/WS-4821" -> "WS-4821"
 const codeFromPath = (): string | null =>
   normalizeCode(window.location.pathname.split("/")[2] ?? "")
@@ -3776,6 +4632,7 @@ export default function App() {
     () => new Date(DEFAULT_CHECKIN_OPENS_AT),
   )
   const [currentRound, setCurrentRound] = useState<GroupRound | null>(null)
+  const [finalistIds, setFinalistIds] = useState<string[]>([])
   const [, setLoadingInitial] = useState(true)
   const refetchTimer = useRef<number | null>(null)
   // The player registered on this phone, if any
@@ -3861,6 +4718,7 @@ export default function App() {
             new Date(settingsRes.data.registration_opens_at),
           )
         }
+        setFinalistIds(settingsRes.data.finalist_ids ?? [])
         if (settingsRes.data.checkin_opens_at) {
           setCheckinOpensAt(new Date(settingsRes.data.checkin_opens_at))
         }
@@ -3962,19 +4820,54 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  // Ranked players, richest first
+  // Everyone registered, richest first (admin screens, lookups by id)
   const players = useMemo(
     () => rankPlayers(balances, startingCapital),
     [balances, startingCapital],
   )
 
+  // The public ranking. Once the game has started, people who registered but
+  // never came (not checked in, no money movement) are left out of it.
+  const rankedPlayers = useMemo(
+    () =>
+      gameStatus === "setup"
+        ? players
+        : rankPlayers(
+            balances.filter(
+              (row) => row.checked_in_at || Number(row.transaction_count) > 0,
+            ),
+            startingCapital,
+          ),
+    [players, balances, startingCapital, gameStatus],
+  )
+
   const myId = registration?.id ?? null
 
   // Portfolio shows the player in the URL, otherwise this phone's player
+  const isShown = (player: Player) =>
+    selectedCode ? player.code === selectedCode : player.id === myId
   const shownPlayer =
-    (selectedCode
-      ? players.find((player) => player.code === selectedCode)
-      : players.find((player) => player.id === myId)) ?? null
+    rankedPlayers.find(isShown) ?? players.find(isShown) ?? null
+
+  const quizOpen =
+    gameStatus === "live" &&
+    games.some((g) => g.status === "live" && QUIZ_GAME.test(g.name))
+
+  // The projector page stands alone: no navigation, no footer
+  if (page === "display") {
+    return (
+      <div className="bg-ink text-white">
+        <DisplayPage
+          players={players}
+          rankedPlayers={rankedPlayers}
+          transactions={transactions}
+          currentRound={currentRound}
+          finalistIds={finalistIds}
+          gameStatus={gameStatus}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-ink text-white">
@@ -4000,13 +4893,14 @@ export default function App() {
           setRegistration={setRegistration}
           players={players}
           currentRound={currentRound}
+          quizOpen={quizOpen}
         />
       )}
       {/* The Portfolio page shares the leaderboard lock */}
       {(page === "leaderboard" ||
         (page === "portfolio" && !isLeaderboardAccessible)) && (
         <Leaderboard
-          players={players}
+          players={rankedPlayers}
           transactions={transactions}
           openPlayer={openPlayer}
           isAccessible={isLeaderboardAccessible}
@@ -4019,7 +4913,7 @@ export default function App() {
       {page === "portfolio" && isLeaderboardAccessible && (
         <PlayerPage
           player={shownPlayer}
-          totalPlayers={players.length}
+          totalPlayers={rankedPlayers.length}
           startingCapital={startingCapital}
           games={games}
           isMe={shownPlayer !== null && shownPlayer.id === myId}
@@ -4027,11 +4921,14 @@ export default function App() {
           groupCard={
             shownPlayer !== null &&
             shownPlayer.id === myId && (
-              <MyGroupCard
-                round={currentRound}
-                players={players}
-                myId={myId}
-              />
+              <>
+                <MyGroupCard
+                  round={currentRound}
+                  players={players}
+                  myId={myId}
+                />
+                {quizOpen && <QuizCard code={shownPlayer.code} />}
+              </>
             )
           }
         />
@@ -4043,6 +4940,7 @@ export default function App() {
           games={games}
           participants={participants}
           currentRound={currentRound}
+          finalistIds={finalistIds}
           isLeaderboardAccessible={isLeaderboardAccessible}
           gameStatus={gameStatus}
           refetchData={fetchData}
