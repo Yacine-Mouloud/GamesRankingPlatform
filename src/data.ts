@@ -176,6 +176,29 @@ export function getLastAction(
 export const groupLabel = (member: Pick<GroupMember, "group_number" | "half">) =>
   `${member.group_number}${member.half ?? ""}`
 
+// Names of the first six groups, so students recognise theirs at a glance.
+// The number stays visible because the station rotation plan uses it.
+export const GROUP_NAMES = [
+  "The Hustlers",
+  "The Dealmakers",
+  "The Brokers",
+  "The High Rollers",
+  "The Venture Crew",
+  "The Risk Takers",
+]
+
+// Null for a seventh group and beyond, which only have a number
+export const groupName = (groupNumber: number): string | null =>
+  GROUP_NAMES[groupNumber - 1] ?? null
+
+// "Group 3 · The Brokers", "Team 3A · The Brokers" or "Group 7"
+export function groupTitle(member: Pick<GroupMember, "group_number" | "half">) {
+  const name = groupName(member.group_number)
+  return `${member.half ? "Team" : "Group"} ${groupLabel(member)}${
+    name ? ` · ${name}` : ""
+  }`
+}
+
 function shuffle<T>(items: T[]): T[] {
   const result = [...items]
   for (let i = result.length - 1; i > 0; i--) {

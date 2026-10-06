@@ -55,6 +55,8 @@ import {
   formatSigned,
   getLastAction,
   groupLabel,
+  groupName,
+  groupTitle,
   makeGroups,
   normalizeCode,
   playerSubtitle,
@@ -762,6 +764,11 @@ function MyGroupCard({
         You're in {mine.half ? "Team" : "Group"}{" "}
         <span className="text-gold">{groupLabel(mine)}</span>
       </p>
+      {groupName(mine.group_number) && (
+        <p className="font-display text-xl text-gold">
+          {groupName(mine.group_number)}
+        </p>
+      )}
       <ul className="mt-3 space-y-1 text-sm text-white/65">
         {mates.map((player) => (
           <li key={player.id}>
@@ -1463,9 +1470,9 @@ function Leaderboard({
               </p>
               {myGroup && (
                 <p className="mt-1 text-xs text-white/45">
-                  {currentRound?.name}: {myGroup.half ? "Team" : "Group"}{" "}
+                  {currentRound?.name}:{" "}
                   <span className="font-semibold text-gold">
-                    {groupLabel(myGroup)}
+                    {groupTitle(myGroup)}
                   </span>
                 </p>
               )}
@@ -2957,6 +2964,8 @@ function BankerPanel({
                 {groupLabels.map((label) => (
                   <option value={label} key={label}>
                     {/[AB]$/.test(label) ? "Team" : "Group"} {label}
+                    {groupName(parseInt(label)) &&
+                      ` · ${groupName(parseInt(label))}`}
                   </option>
                 ))}
               </select>
@@ -3160,7 +3169,7 @@ function GroupGrid({
             key={number}
           >
             <p className="flex items-center justify-between text-sm font-semibold text-gold">
-              Group {number}
+              {groupTitle({ group_number: number, half: null })}
               <span className="text-xs font-normal text-white/30">
                 {group.length} players
               </span>
@@ -3692,8 +3701,11 @@ function EventsPanel({
   const [quizConfig, setQuizConfig] = useState<{
     secret: string
     dollars_per_point: number
+    // Paid to everyone who answers, whatever their score
+    base_amount?: number
   } | null>(null)
   const [perPoint, setPerPoint] = useState("")
+  const [baseAmount, setBaseAmount] = useState("")
   const [answeredIds, setAnsweredIds] = useState<string[]>([])
   const [showSecret, setShowSecret] = useState(false)
 
@@ -3709,6 +3721,9 @@ function EventsPanel({
         setQuizConfig(configRes.data)
         setPerPoint((current) =>
           current === "" ? String(configRes.data.dollars_per_point) : current,
+        )
+        setBaseAmount((current) =>
+          current === "" ? String(configRes.data.base_amount ?? 0) : current,
         )
       }
       if (answersRes.data) {
@@ -3793,6 +3808,7 @@ function EventsPanel({
 
   const quiz = parseQuizScores(quizText, players)
   const dollarsPerPoint = Number(quizConfig?.dollars_per_point ?? 0)
+  const dollarsForAnswering = Number(quizConfig?.base_amount ?? 0)
   // Pasted answers of players the form has not already credited
   const quizRows = [...quiz.scores.entries()]
     .filter(([id]) => !answeredIds.includes(id))
@@ -3803,23 +3819,26 @@ function EventsPanel({
   const alreadyCredited = quiz.scores.size - quizRows.length
   const quizMovements: Movement[] = quizRows.map(({ player, score }) => ({
     player,
-    amount: Math.round(score * dollarsPerPoint),
+    amount: Math.round(dollarsForAnswering + score * dollarsPerPoint),
     note: `${score} pts`,
   }))
 
-  const savePerPoint = async () => {
-    const value = Math.max(0, Number(perPoint) || 0)
+  const savePayout = async () => {
+    const payout = {
+      dollars_per_point: Math.max(0, Number(perPoint) || 0),
+      base_amount: Math.max(0, Number(baseAmount) || 0),
+    }
     const { error } = await supabase
       .from("quiz_config")
-      .update({ dollars_per_point: value })
+      .update(payout)
       .eq("id", 1)
     if (error) {
       setNotice(`⚠️ Could not save: ${error.message}`)
     } else {
-      setQuizConfig((current) =>
-        current ? { ...current, dollars_per_point: value } : current,
+      setQuizConfig((current) => (current ? { ...current, ...payout } : current))
+      setNotice(
+        `Quiz payout saved: ${formatMoney(payout.base_amount)} for answering + ${formatMoney(payout.dollars_per_point)} per point.`,
       )
-      setNotice(`Each quiz point is now worth ${formatMoney(value)}.`)
     }
   }
 
@@ -3968,7 +3987,17 @@ function EventsPanel({
                 </p>
                 <p className="mt-1 text-xs text-white/40">answers received</p>
               </div>
-              <label className="field-label sm:col-span-2">
+              <label className="field-label">
+                Dollars for answering
+                <input
+                  className="field-control"
+                  type="number"
+                  min="0"
+                  value={baseAmount}
+                  onChange={(e) => setBaseAmount(e.target.value)}
+                />
+              </label>
+              <label className="field-label">
                 Dollars per point
                 <div className="mt-2 flex gap-2">
                   <input
@@ -3980,14 +4009,22 @@ function EventsPanel({
                   />
                   <Button
                     variant="secondary"
-                    onClick={savePerPoint}
-                    disabled={Number(perPoint) === dollarsPerPoint}
+                    onClick={savePayout}
+                    disabled={
+                      Number(perPoint) === dollarsPerPoint &&
+                      Number(baseAmount) === dollarsForAnswering
+                    }
                   >
                     Save
                   </Button>
                 </div>
               </label>
             </div>
+            <p className="mt-2 text-xs text-white/40">
+              A student who scores 5 points earns{" "}
+              {formatMoney(dollarsForAnswering + 5 * dollarsPerPoint)}. Changes
+              apply to answers that arrive after you save.
+            </p>
             <div className="mt-4 text-xs text-white/40">
               Secret for the form's script:{" "}
               {showSecret ? (
@@ -4476,8 +4513,14 @@ function DisplayPage({
                     key={label}
                   >
                     <p className="font-display text-3xl text-gold">
-                      {isSplit ? "Team" : "Group"} {label}
+                      {groupName(parseInt(label)) ??
+                        `${isSplit ? "Team" : "Group"} ${label}`}
                     </p>
+                    {groupName(parseInt(label)) && (
+                      <p className="text-sm uppercase tracking-widest text-white/40">
+                        {isSplit ? "Team" : "Group"} {label}
+                      </p>
+                    )}
                     <ul className="mt-3 space-y-1 text-lg text-white/80">
                       {members
                         .filter((m) => groupLabel(m) === label)
